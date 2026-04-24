@@ -63,7 +63,6 @@ End goal: code that actually runs well on ROCm, not just compiles.
 
 * Gemma 4 Model Card - https://ai.google.dev/gemma/docs/core/model_card_4
 * Gemma Fine-Tunning Docs - https://gemma-llm.readthedocs.io/en/latest/colab_finetuning.html
-* Gemma Data Pipeline Docs - data pipeline documentation 
-https://kauldron.readthedocs.io/en/latest/data_py.html
+* Gemma Data Pipeline Docs - https://kauldron.readthedocs.io/en/latest/data_py.html
 
 ---
