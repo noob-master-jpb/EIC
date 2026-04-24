@@ -13,18 +13,19 @@ Goal is not just conversion, but **performance-aware translation** for AMD GPUs.
 
 * Fast iteration
 * Build pipeline + dataset
-* Basic CUDA → HIP mapping
+* Basic finetuning(for tech stack testing)
 
 **Phase 2 — Brain (Gemma 4 26B MoE)**
 
 * Real reasoning
+* Basic CUDA → HIP mapping
 * Multi-file understanding
 * Use MI300X full VRAM
-
+* Distil Training (Parent Model -> Not Selected)
+  
 **Phase 3 — Future (BitNet 1.58)**
 
-* Try distilling 26B → ultra-light model
-* If it works: huge efficiency win
+* Conversion to Bitnet 1.58 for finetuned model
 
 ---
 
