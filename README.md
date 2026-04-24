@@ -7,19 +7,6 @@ Goal is not just conversion, but **performance-aware translation** for AMD GPUs.
 
 ---
 
-## Core idea
-
-Most tools do syntax swap.
-We’re training a model to understand:
-
-* Warp (CUDA) vs Wavefront (AMD)
-* Memory layout differences
-* Intrinsics + kernel-level optimizations
-
-End goal: code that actually runs well on ROCm, not just compiles.
-
----
-
 ## Plan
 
 **Phase 1 — Prototype (Gemma 4 2B)**
