@@ -7,9 +7,9 @@ Improper Generation of Block Tokens through prompt injection in Gemme 4 2B Model
 
 >[!NOTE]
 >**Sample Responses**<br>
-> **Sample 1** – Response: `ok`, Parser: `broken`
-> **Sample 2** – Response: `broken`, Parser: `broken`
-> **Sample 3** – Response: `ok`, Parser: `ok`
+>**Sample 1** – Response: `ok`, Parser: `broken`<br>
+>**Sample 2** – Response: `broken`, Parser: `broken`<br>
+>**Sample 3** – Response: `ok`, Parser: `ok`<br>
 
 ## Observations & Debugging
 
