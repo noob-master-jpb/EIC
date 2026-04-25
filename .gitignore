@@ -2,3 +2,4 @@
 *.safetensors
 models/
 gemma*/
+__pycache__
