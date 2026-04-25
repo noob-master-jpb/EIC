@@ -2,7 +2,7 @@
 
 ### 25.04.2026 5:32AM (Ankan)
 
->##[!ISSUE_001]
+>[!ISSUE_001]
 >Improper Generation of Block Tokens through prompt injection in Gemme 4 2B Model
 
 ## Sample Responses
