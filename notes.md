@@ -1,18 +1,16 @@
 # Project Notes
 
-### 25.04.2026 5:30AM (Ankan)
+---
 
-## Test Script
+## 25 Apr 2026, 5:30 AM · @Ankan
 
-Added `test.py` to run the model.
+### Test Script
 
-## Test Script Checklist
+Added `test.py` to run the model locally for inference testing.
 
-```markdown
-1. Ensure the model is downloaded to the specified location (assign to AI).
-2. Close all background processes, including IDEs; run via terminal.
-3. Use Python **3.12**.
-4. Install required packages with `pip3` (automate with AI).
-```
+### Checklist
 
-
+1. **Download the model** — Ensure it is saved to the correct local directory *(automate with AI)*
+2. **Clear background processes** — Close all running apps and IDEs; run via terminal only
+3. **Python version** — Use **Python 3.12**
+4. **Install dependencies** — Use `pip3` to install required packages *(automate with AI)*
