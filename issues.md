@@ -2,14 +2,14 @@
 
 ### 25.04.2026 5:32AM (Ankan)
 
->[!ISSUE_001]
+>##\#ISSUE 001
 >Improper Generation of Block Tokens through prompt injection in Gemme 4 2B Model
 
-## Sample Responses
-
-- **Sample 1** – Response: `ok`, Parser: `broken`
-- **Sample 2** – Response: `broken`, Parser: `broken`
-- **Sample 3** – Response: `ok`, Parser: `ok`
+>[!NOTE]
+>##Sample Responses
+> **Sample 1** – Response: `ok`, Parser: `broken`
+> **Sample 2** – Response: `broken`, Parser: `broken`
+> **Sample 3** – Response: `ok`, Parser: `ok`
 
 ## Observations & Debugging
 
