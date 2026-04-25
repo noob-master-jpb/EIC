@@ -1,8 +1,7 @@
 import requests
 url = "https://inference.do-ai.run/v1/chat/completions"
 headers = {
-    "Content-Type": "application/json",
-    "Authorization": "Bearer sk-do-LJwtalqUMyKXNLkGsKDyoAE9C9LxfVPQ_y_745zbiG32nFb3pN88x4ACnj"
+   "Authorization": "Bearer sk-do-LJwtalqUMyKXNLkGsKDyoAE9C9LxfVPQ_y_745zbiG32nFb3pN88x4ACnj"
 }
 data = {
     "model": "glm-5",
