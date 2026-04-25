@@ -5,7 +5,7 @@ headers = {
     "Authorization": "Bearer sk-do-LJwtalqUMyKXNLkGsKDyoAE9C9LxfVPQ_y_745zbiG32nFb3pN88x4ACnj"
 }
 data = {
-    "model": "kimi-k2.5",
+    "model": "glm-5",
     "messages": [
         {   
             "role": "user",
@@ -18,6 +18,8 @@ data = {
       "max_tokens": 1024
     },
 }
+
+
 from pprint import pprint
 response = requests.post(url, headers=headers, json=data)
 pprint(response.json())

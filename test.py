@@ -2,15 +2,16 @@ import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 from transformers import AutoProcessor, AutoModelForCausalLM
 import torch 
-import gemma
+import re
+from typing import Dict
 
 
 
 MODEL_ID = "./models/gemma-4-E2B-it"
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 # Configuration
-TOKENIZE = True
-ENABLE_THINKING = True
+TOKENIZE = False
+ENABLE_THINKING = False
 
 # Load model
 processor = AutoProcessor.from_pretrained(MODEL_ID)
@@ -68,11 +69,11 @@ print("--- Raw Response ---")
 print(response)
 print("--- Parsed Response (Native Gemma 4 Parser) ---")
 # Using the native parser implemented in gemma.py
-parser = gemma.Gemma4ReasoningParser()
-parsed_data = parser.parse(response)
 
-if parsed_data["thinking"]:
-    print(f"THINKING:\n{parsed_data['thinking']}\n")
-print(f"ANSWER:\n{parsed_data['answer']}")
+parsed_data = processor.parse_response(response)
 
-print(parsed_data)
+# if parsed_data["thinking"]:
+#     print(f"THINKING:\n{parsed_data['thinking']}\n")
+# print(f"ANSWER:\n{parsed_data['answer']}")
+
+print('\n',parsed_data)
