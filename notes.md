@@ -1,26 +1,6 @@
 # Project Notes
 
-### 25.04.2026 5:49AM (Ankan)
-
-## Sample Responses
-
-- **Sample 1** – Response: `ok`, Parser: `broken`
-- **Sample 2** – Response: `broken`, Parser: `broken`
-- **Sample 3** – Response: `ok`, Parser: `ok`
-
-## Observations & Debugging
-
-```markdown
-- Possible causes:
-  - Low parameter count and quantization
-  - Need to test on larger models (e.g., 26B MoE or 31B)
-```
-
-## Action Items
-
-1. **Dataset Guardrails** – Add validation checks (assigned to *Ayush*).
-2. **Post‑Processing Improvements** – Implement regex or token validation (assigned to *Arya*).
-3. **Prompt Engineering** – Refine prompts for hosting (note: "k korbi pore dekhchi ota").
+### 25.04.2026 5:30AM (Ankan)
 
 ## Test Script
 
@@ -34,4 +14,5 @@ Added `test.py` to run the model.
 3. Use Python **3.12**.
 4. Install required packages with `pip3` (automate with AI).
 ```
+
 
