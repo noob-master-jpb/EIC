@@ -1,15 +1,43 @@
 import pandas as pd
-import json
+import datasets
+def load_dataset(path:str):
+    """
+    Supported Formats:
+    - Parquet (Recommended)
+    - CSV
+    
+    Args:
+        path (str): Path to the dataset file
+        
+    Returns:
+        pd.DataFrame: Loaded dataset
+    """
 
-# Since it's a JSONL file, we use lines=True
-df = pd.read_json('dataset/problems.jsonl', lines=True)
+    if path.endswith(".parquet"):
+        df = pd.read_parquet(path)
+    elif path.endswith(".csv"):
+        df = pd.read_csv(path)
+    else:
+        raise ValueError("Unsupported file format")
+    return df
 
-# Print the head of the DataFrame
-# print(df.columns)
-# from pprint import pprint
-# pprint(df['type', 'schema_version', 'task_id', 'date', 'prompt', 'metadata',
-#        'group', 'context_files', 'test_files', 'source_references',
-#        'build_command', 'test_command', 'benchmark_command', 'timing_mode',
-#        'min_cuda_toolkit', 'compute_capability', 'requires_datacenter_gpu',
-#        'timeout_seconds', 'baseline_solution'][0], width = 800, compact=True) 
-df.to_parquet('dataset/problems.parquet', index=False)
+def format_dataset(df:pd.DataFrame,user_prompt:str,agent_response:str,dataset:bool=True):
+    messages = []
+    for _, val in df.iterrows():
+        
+        conv = []
+        conv.append(
+            { "role": "user", "content": [{"type": "text", "text": str(val[user_prompt])}] }
+        )
+        conv.append(
+            { "role": "model", "content": [{"type": "text", "text": str(val[agent_response])}] }
+        )
+        messages.append(conv)
+    dataset = {'messages' : messages}
+    if dataset:
+        return datasets.Dataset.from_dict(dataset)
+    return dataset
+    
+def load_format_dataset(path:str,user_prompt:str,agent_response:str,dataset:bool=True):
+    return format_dataset(load_dataset(path),user_prompt,agent_response,dataset)
+
