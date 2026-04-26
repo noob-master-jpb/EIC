@@ -1,59 +1,66 @@
 import torch
-from transformers import AutoTokenizer, AutoProcessor, AutoModelForCausalLM
+from unsloth import FastLanguageModel
+from unsloth.chat_templates import get_chat_template
 from trl import SFTConfig, SFTTrainer
-from peft import LoraConfig
-from data import *
+from data import process_dataset
 
+MODEL_ID = "gemma-4-E2B-it"
 
-MODEL_ID = "./models/gemma-4-E2B-it"
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-processor = AutoProcessor.from_pretrained(MODEL_ID)
-tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-
-train_dataset = process_dataset("./Datasets/oss-ins-75k.parquet","problem","solution",processor=processor,num_proc=1)
-
-
-model = AutoModelForCausalLM.from_pretrained(
-    MODEL_ID,
-    torch_dtype=torch.bfloat16, 
+model, tokenizer = FastLanguageModel.from_pretrained(
+    model_name = MODEL_ID,
+    max_seq_length = 1024,
+    load_in_4bit = True,
 )
 
-
-peft_config = LoraConfig(
-    r=16,
-    lora_alpha=32,
-    target_modules="all-linear",
-    lora_dropout=0.05,
-    bias="none",
-    task_type="CAUSAL_LM"
+model = FastLanguageModel.get_peft_model(
+    model,
+    r = 16, 
+    target_modules = [
+        "q_proj", "k_proj", "v_proj", "o_proj",
+        "gate_proj", "up_proj", "down_proj"
+    ], 
+    lora_alpha = 32,
+    lora_dropout = 0.05,
+    bias = "none",    
+    random_state = 3407,
 )
 
-
-training_args = SFTConfig(
-    output_dir="./gemma-4-finetuned",
-    max_seq_length=1024,
-    per_device_train_batch_size=4,      
-    gradient_accumulation_steps=4,       
-    learning_rate=2e-4,
-    bf16=True,
-    packing=True,
-    assistant_only_loss=True,            
-    processing_class=processor,          
-    logging_steps=10,
-    save_steps=100                      
+tokenizer = get_chat_template(
+    tokenizer,
+    chat_template = "gemma-4"
 )
 
+train_dataset = process_dataset(
+    path = "./Datasets/oss-ins-75k.parquet",
+    user_prompt = "problem",
+    agent_response = "solution",
+    processor = tokenizer, 
+    num_proc = 2
+)
 
 trainer = SFTTrainer(
-    model=model,
-    train_dataset=train_dataset,
-    args=training_args,
-    peft_config=peft_config,
+    model = model,
+    tokenizer = tokenizer,
+    train_dataset = train_dataset,
+    dataset_text_field = "text", 
+    max_seq_length = 1024,
+    packing = True, 
+    args = SFTConfig(
+        output_dir = "./gemma-4-finetuned",
+        per_device_train_batch_size = 4,
+        gradient_accumulation_steps = 4,
+        learning_rate = 2e-4,
+        bf16 = True,
+        logging_steps = 10,
+        save_steps = 100,
+        optim = "adamw_8bit", 
+        weight_decay = 0.01,
+        seed = 3407,
+    ),
 )
 
-print("Starting training...")
+
 trainer.train()
 
-
-trainer.save_model("./gemma-4-finetuned-final")
+model.save_pretrained("./gemma-4-finetuned-final")
+tokenizer.save_pretrained("./gemma-4-finetuned-final")
