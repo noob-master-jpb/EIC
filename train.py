@@ -10,12 +10,12 @@ model, tokenizer = FastLanguageModel.from_pretrained(
     model_name = MODEL_ID,
     max_seq_length = 4096,
     load_in_4bit = True, # Unsloth 4-bit is still faster than full bf16
-    use_gradient_checkpointing = False,
+    use_gradient_checkpointing = True,
 )
 
 model = FastLanguageModel.get_peft_model(
     model,
-    r = 64, 
+    r = 32, 
     target_modules = [
         "q_proj", "k_proj", "v_proj", "o_proj",
         "gate_proj", "up_proj", "down_proj"
@@ -49,7 +49,7 @@ trainer = SFTTrainer(
     packing = True, 
     args = SFTConfig(
         output_dir = "./gemma-4-finetuned",
-        per_device_train_batch_size = 64, # Even larger for 2B on MI300X
+        per_device_train_batch_size = 128, # Even larger for 2B on MI300X
         gradient_accumulation_steps = 1,
         learning_rate = 2e-4,
         bf16 = True,
