@@ -3,4 +3,5 @@
 models/
 gemma*/
 __pycache__
-Datasets/codefeedback_filtered.parquet
+Datasets/codefeedback_filtered.parquet
+Datasets/codefeedback.txt
