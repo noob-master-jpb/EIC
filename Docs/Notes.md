@@ -45,3 +45,22 @@ Added `test.py` to run the model locally for inference testing.
 
 > [!NOTE]
 > The datasets have **not yet been checked for compatibility** with Gemma-4 (Training Model) or GLM-5 (Teacher/Distillation Model).
+
+---
+
+## 26 Apr 2026, 11:24 PM · @Antigravity
+
+### Dataset Optimization & Standardization
+
+1.  **Standardized `nvidia_compute_eval`**:
+    *   Merged the complex 9-parameter schema into a unified 2-column format (`problem`, `solution`) compatible with the training pipeline.
+    *   Prepended expert GPU C++ system instructions to all problem statements.
+    *   Generated `nvidia_compute_eval_new.parquet` and a matching human-readable `.txt` file.
+2.  **Streamlined Data Pipeline**:
+    *   Refactored `data_reshape.py` as the primary engine for conversion (switched to PyArrow for significant speed gains).
+    *   Updated `data_loader.py` to automate downloading and Parquet-exporting the CodeFeedback dataset.
+    *   Created `load.py` utility for rapid dataset previewing.
+3.  **Language Analysis**:
+    *   Performed frequency analysis on CodeFeedback dataset (150+ languages; Python/JS leading).
+4.  **Workspace Cleanup**:
+    *   Standardized all outputs to the `Datasets/` directory and updated `.gitignore`.
