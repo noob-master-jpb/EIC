@@ -8,8 +8,8 @@ MODEL_ID = "google/gemma-4-E2B-it"
 
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name = MODEL_ID,
-    max_seq_length = 1024,
-    load_in_4bit = True,
+    max_seq_length = 4096,
+    load_in_4bit = True, # Unsloth 4-bit is still faster than full bf16
 )
 
 model = FastLanguageModel.get_peft_model(
@@ -35,7 +35,7 @@ train_dataset = process_dataset(
     user_prompt = "problem",
     agent_response = "solution",
     processor = tokenizer, 
-    num_proc = 2
+    num_proc = 16 # Faster processing
 )
 
 trainer = SFTTrainer(
@@ -43,19 +43,21 @@ trainer = SFTTrainer(
     tokenizer = tokenizer,
     train_dataset = train_dataset,
     dataset_text_field = "text", 
-    max_seq_length = 1024,
+    max_seq_length = 4096,
     packing = True, 
     args = SFTConfig(
         output_dir = "./gemma-4-finetuned",
-        per_device_train_batch_size = 4,
-        gradient_accumulation_steps = 4,
+        per_device_train_batch_size = 128, # Even larger for 2B on MI300X
+        gradient_accumulation_steps = 1,
         learning_rate = 2e-4,
         bf16 = True,
-        logging_steps = 10,
-        save_steps = 100,
-        optim = "adamw_8bit", 
+        logging_steps = 1,
+        save_steps = 500,
+        optim = "adamw_8bit", # 8-bit is usually faster due to less memory IO
         weight_decay = 0.01,
         seed = 3407,
+        dataloader_num_workers = 16, # Faster data loading
+        dataloader_pin_memory = True,
     ),
 )
 
