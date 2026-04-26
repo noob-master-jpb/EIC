@@ -8,7 +8,7 @@ def main():
     # 1. Parse arguments for robust file handling
     input_file = sys.argv[1] if len(sys.argv) > 1 else os.path.join("Datasets", "nvidia_compute_eval.parquet")
     output_parquet = sys.argv[2] if len(sys.argv) > 2 else os.path.join("Datasets", "organized_nvidia_compute_eval.parquet")
-    output_txt = sys.argv[3] if len(sys.argv) > 3 else os.path.join("Datasets", "human_readable_review.txt")
+    output_txt = sys.argv[3] if len(sys.argv) > 3 else os.path.join("Datasets", "organized_nvidia_compute_eval.txt")
     
     if not os.path.exists(input_file):
         print(f"Error: Input file '{input_file}' not found.")
