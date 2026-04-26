@@ -35,7 +35,7 @@ train_dataset = process_dataset(
     user_prompt = "problem",
     agent_response = "solution",
     processor = tokenizer, 
-    num_proc = 16 # Faster processing
+    num_proc = 1 
 )
 
 trainer = SFTTrainer(
