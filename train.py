@@ -10,16 +10,17 @@ model, tokenizer = FastLanguageModel.from_pretrained(
     model_name = MODEL_ID,
     max_seq_length = 4096,
     load_in_4bit = True, # Unsloth 4-bit is still faster than full bf16
+    use_gradient_checkpointing = False,
 )
 
 model = FastLanguageModel.get_peft_model(
     model,
-    r = 16, 
+    r = 64, 
     target_modules = [
         "q_proj", "k_proj", "v_proj", "o_proj",
         "gate_proj", "up_proj", "down_proj"
     ], 
-    lora_alpha = 32,
+    lora_alpha = 64,
     lora_dropout = 0.05,
     bias = "none",    
     random_state = 3407,
@@ -44,6 +45,7 @@ trainer = SFTTrainer(
     train_dataset = train_dataset,
     dataset_text_field = "text", 
     max_seq_length = 4096,
+    dataset_num_proc = 4, # Unsloth/TRL tokenization processes
     packing = True, 
     args = SFTConfig(
         output_dir = "./gemma-4-finetuned",
