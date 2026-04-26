@@ -4,7 +4,7 @@ from unsloth.chat_templates import get_chat_template
 from trl import SFTConfig, SFTTrainer
 from data import process_dataset
 
-MODEL_ID = "gemma-4-E2B-it"
+MODEL_ID = "google/gemma-4-E2B-it"
 
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name = MODEL_ID,
