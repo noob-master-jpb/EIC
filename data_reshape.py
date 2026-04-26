@@ -92,11 +92,7 @@ def main():
             f_out.write("WORKSPACE PROVIDED:\n")
             f_out.write(f"{workspace}\n\n")
             
-            f_out.write("REASONING ENGINE (Placeholder for Gemma 26B):\n")
-            f_out.write("<|channel>thought\n")
-            f_out.write("[The 26B model will generate the step-by-step AMD mapping here.]\n")
-            f_out.write("<channel|>\n\n")
-            
+
             f_out.write("### OUTPUT ###\n")
             f_out.write(f"{solution_content}\n\n")
             
