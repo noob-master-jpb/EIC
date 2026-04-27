@@ -3,7 +3,6 @@
 models/
 gemma*/
 __pycache__
-Datasets/codefeedback_filtered.parquet
-Datasets/codefeedback.txt
+Datasets/codefeedback*.txt
 Datasets/ahmedheakl_cass_source_grpo.parquet
-
+Datasets/nvidia_compute_eval_new.txt
