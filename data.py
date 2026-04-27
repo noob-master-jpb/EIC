@@ -246,10 +246,4 @@ def combine_dataset(
 
 
 if __name__ == "__main__":
-    combine_dataset(
-        paths = [""],
-        column_mapping = {
-            "" : ["",""]
-        },
-        output_mapping = {"user":"", "agent":""}
-    )
+    pass
