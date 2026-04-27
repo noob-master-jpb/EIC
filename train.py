@@ -9,7 +9,7 @@ MODEL_ID = "google/gemma-4-31B"
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name = MODEL_ID,
     max_seq_length = 2048,
-    load_in_4bit = False, # Set to False for full 16-bit training
+    load_in_4bit = False, 
     use_gradient_checkpointing = True,
 )
 
