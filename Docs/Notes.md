@@ -64,3 +64,34 @@ Added `test.py` to run the model locally for inference testing.
     *   Performed frequency analysis on CodeFeedback dataset (150+ languages; Python/JS leading).
 4.  **Workspace Cleanup**:
     *   Standardized all outputs to the `Datasets/` directory and updated `.gitignore`.
+
+---
+
+## 27 Apr 2026, 7:56 PM · @Ankan
+
+### 🚀 Pipeline Validation: `ins-oss-75k`
+Successfully completed end-to-end stress testing and validation of the primary training pipeline.
+
+| Attribute | Details |
+| :--- | :--- |
+| **Model** | Gemma-4 2B |
+| **Hardware** | 1x AMD Instinct™ MI300X Accelerator |
+| **Dataset** | `ins-oss-75k.parquet` |
+| **Status** | ✅ Verified Stable |
+
+**Observations:**
+*   Confirmed high-throughput performance within the **ROCm** stack.
+*   Loss convergence behavior is consistent with synthetic benchmark expectations.
+
+---
+
+### 🛠️ Infrastructure Tasking
+> [!IMPORTANT]
+> **Environment Automation Script** — Assigned to **@Ayush**
+>
+> **Objective:** Develop a robust shell script to handle Python environment initialization during GPU droplet instantiation.
+> 1.  Installs `uv` and initializes a fresh Python virtual environment.
+> 2. Configures `unsloth[amd]` using `uv` for immediate GPU-accelerated training.
+> 3.  Performs a headless installation of PyTorch (ROCm-enabled), `pandas`, and `datasets`.
+
+---
