@@ -90,7 +90,8 @@ Successfully completed end-to-end stress testing and validation of the primary t
 > **Environment Automation Script** — Assigned to **@Ayush**
 >
 > **Objective:** Develop a robust shell script to handle Python environment initialization during GPU droplet instantiation.
-> - **Scope:** ROCm drivers check, dependency injection, and `venv` isolation.
-> - **Goal:** Reduce setup time for new cloud nodes to < 2 minutes.
+> 1.  Installs `uv` and initializes a fresh Python virtual environment.
+> 2. Configures `unsloth[amd]` using `uv` for immediate GPU-accelerated training.
+> 3.  Performs a headless installation of PyTorch (ROCm-enabled), `pandas`, and `datasets`.
 
 ---
