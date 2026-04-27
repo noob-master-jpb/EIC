@@ -122,3 +122,18 @@ Successfully completed end-to-end stress testing and validation of the primary t
    * Diagnosed and fixed ROCm version mismatches on the MI300X platform.
    * Standardized the pipeline to use **ROCm 7.2** specific PyTorch wheels, ensuring full GPU hardware acceleration.
 
+---
+
+## 28 Apr 2026, 03:30 AM · @Arya
+
+### Dataset research and findings.      [Status:Done]
+
+ * Founded the datasets present in file `Dataset.md` 
+
+### Model Technical Summary.      [Status:Failed]
+
+ *   **Model Used:** `unsloth/gemma-4-E2B-it-GGUF`.
+ *   **Served via vLLM:** No.
+ *   **Problem with vLLM:** The `gemma4` architecture is too new; `vLLM` (and `transformers`) currently lacks support for parsing this specific architecture from GGUF files.
+ *   **Current Solution:** Served via a local **Ollama** instance, which has specialized support for the `gemma4` architecture and its reasoning/thinking tokens.
+
