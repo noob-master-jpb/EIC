@@ -4,7 +4,7 @@ from unsloth.chat_templates import get_chat_template
 from trl import SFTConfig, SFTTrainer
 from data import process_dataset
 
-MODEL_ID = "google/gemma-4-E2B-it"
+MODEL_ID = "google/gemma-4-31B"
 
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name = MODEL_ID,
@@ -64,8 +64,13 @@ trainer = SFTTrainer(
     ),
 )
 
+try:
+    print("Starting training. Press Ctrl+C to interrupt and save the model early.")
+    trainer.train()
+except KeyboardInterrupt:
+    print("\nTraining interrupted by user. Saving the model at the current state...")
 
-trainer.train()
-
+print("Saving model and tokenizer to ./gemma-4-finetuned-final")
 model.save_pretrained("./gemma-4-finetuned-final")
 tokenizer.save_pretrained("./gemma-4-finetuned-final")
+print("Save complete!")
