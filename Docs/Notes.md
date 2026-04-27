@@ -96,7 +96,7 @@ Successfully completed end-to-end stress testing and validation of the primary t
 
 ---
 
-## 27 Apr 2026, 11:50 PM · @Ayush
+## 28 Apr 2026, 01:33 AM · @Ayush
 
 ### Dataset Cleaning & Chunking
 
@@ -112,3 +112,13 @@ Successfully completed end-to-end stress testing and validation of the primary t
     *   Created `data_reshape-2.py` to map OpenHermes `conversations` (human/gpt) into the unified 2-column `problem`/`solution` schema.
 4.  **Training Coordination**:
     *   Collaborated with **@Ankan** on the implementation of `train.py` using Unsloth's `FastLanguageModel`.
+
+### Environment Automation & Droplet Setup
+
+1. **Automated Setup Script (`setup_venv.sh`)**:
+   * Developed a bash script to automate the full environment initialization on DigitalOcean GPU droplets.
+   * Integrated `uv` for lightning-fast package installation and virtual environment management.
+2. **ROCm 7.2 Optimization**:
+   * Diagnosed and fixed ROCm version mismatches on the MI300X platform.
+   * Standardized the pipeline to use **ROCm 7.2** specific PyTorch wheels, ensuring full GPU hardware acceleration.
+
