@@ -48,7 +48,7 @@ Added `test.py` to run the model locally for inference testing.
 
 ---
 
-## 26 Apr 2026, 11:24 PM · @Antigravity
+## 26 Apr 2026, 11:24 PM · @Ayush
 
 ### Dataset Optimization & Standardization
 
