@@ -9,7 +9,7 @@ MODEL_ID = "google/gemma-4-E2B-it"
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name = MODEL_ID,
     max_seq_length = 2048,
-    load_in_4bit = True, # Unsloth 4-bit is still faster than full bf16
+    load_in_4bit = False, # Set to False for full 16-bit training
     use_gradient_checkpointing = True,
 )
 
