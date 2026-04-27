@@ -130,10 +130,10 @@ Successfully completed end-to-end stress testing and validation of the primary t
 
  * Founded the datasets present in file `Dataset.md` 
 
-### Model Technical Summary.      [Status:Failed]
+### Model Serve via vLLM.      [Status:Failed]
 
  *   **Model Used:** `unsloth/gemma-4-E2B-it-GGUF`.
  *   **Served via vLLM:** No.
  *   **Problem with vLLM:** The `gemma4` architecture is too new; `vLLM` (and `transformers`) currently lacks support for parsing this specific architecture from GGUF files.
- *   **Current Solution:** Served via a local **Ollama** instance, which has specialized support for the `gemma4` architecture and its reasoning/thinking tokens.
+ *   **Current Solution:** Served via a local **Ollama** instance (llama.cpp), which has specialized support for the `gemma4` architecture and its reasoning/thinking tokens.
 
