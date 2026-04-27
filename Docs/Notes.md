@@ -95,3 +95,18 @@ Successfully completed end-to-end stress testing and validation of the primary t
 > 3.  Performs a headless installation of PyTorch (ROCm-enabled), `pandas`, and `datasets`.
 
 ---
+
+## 27 Apr 2026, 11:50 PM · @Ayush
+
+### Dataset Cleaning & Chunking
+
+1.  **Advanced Validation & Row Pruning**:
+    *   Refactored `data-validation.py` with a precise Unicode allowlist (Math, Greek, Emojis, Box-drawing).
+    *   Implemented a **0.5% foreign language threshold**; rows exceeding this are now automatically dropped.
+    *   Permanently cleaned all datasets, removing foreign natural language while preserving technical symbols.
+2.  **GitHub Compatibility (Splitting)**:
+    *   Splitted `codefeedback_filtered.parquet` (163MB) into 4 smaller chunks using `data_reshaper-1.py`.
+    *   Splitted `ahmedheakl_cass_source_grpo.parquet` (149MB) into 2 chunks using `data_reshaper-3.py`.
+    *   Updated `.gitignore` to prevent tracking of original massive files.
+3.  **OpenHermes Standardisation**:
+    *   Created `data_reshape-2.py` to map OpenHermes `conversations` (human/gpt) into the unified 2-column `problem`/`solution` schema.
