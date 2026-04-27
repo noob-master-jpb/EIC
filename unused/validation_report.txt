@@ -1,0 +1,52 @@
+======================================================================
+VALIDATION & CLEANING REPORT
+Threshold: non-English chars > 0.5% of row → DROP
+======================================================================
+
+File: ahmedheakl_cass_source_grpo_part1.parquet
+  Total rows:   31727
+  Rows kept:    31727
+  Rows dropped: 0
+
+File: ahmedheakl_cass_source_grpo_part2.parquet
+  Total rows:   32309
+  Rows kept:    32309
+  Rows dropped: 0
+
+File: codefeedback_filtered_part1.parquet
+  Total rows:   51926
+  Rows kept:    51926
+  Rows dropped: 0
+
+File: codefeedback_filtered_part2.parquet
+  Total rows:   51838
+  Rows kept:    51838
+  Rows dropped: 0
+
+File: codefeedback_filtered_part3.parquet
+  Total rows:   51885
+  Rows kept:    51885
+  Rows dropped: 0
+
+File: codefeedback_filtered_part4.parquet
+  Total rows:   526
+  Rows kept:    526
+  Rows dropped: 0
+
+File: nvidia_compute_eval_new.parquet
+  Total rows:   566
+  Rows kept:    566
+  Rows dropped: 0
+
+File: openhermes-coding-tasks_new.parquet
+  Total rows:   5561
+  Rows kept:    5561
+  Rows dropped: 0
+
+File: oss-ins-75k.parquet
+  Total rows:   74791
+  Rows kept:    74791
+  Rows dropped: 0
+
+======================================================================
+Done.
