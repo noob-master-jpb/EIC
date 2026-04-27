@@ -32,7 +32,7 @@ tokenizer = get_chat_template(
 )
 
 train_dataset = process_dataset(
-    path = "./Datasets/oss-ins-75k.parquet",
+    df = "./Datasets/oss-ins-75k.parquet",
     user_prompt = "problem", 
     agent_response = "solution",
     processor = tokenizer, 
