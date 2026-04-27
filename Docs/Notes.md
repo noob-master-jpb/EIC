@@ -110,3 +110,5 @@ Successfully completed end-to-end stress testing and validation of the primary t
     *   Updated `.gitignore` to prevent tracking of original massive files.
 3.  **OpenHermes Standardisation**:
     *   Created `data_reshape-2.py` to map OpenHermes `conversations` (human/gpt) into the unified 2-column `problem`/`solution` schema.
+4.  **Training Coordination**:
+    *   Collaborated with **@Ankan** on the implementation of `train.py` using Unsloth's `FastLanguageModel`.
