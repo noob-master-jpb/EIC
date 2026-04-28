@@ -38,3 +38,52 @@
   * **Link:** https://github.com/ROCm/HIPIFY/tree/amd-staging/doc/markdown
   * **Size:** Thousands of exact API mappings
   * **Fit:** The ground-truth dictionary for API swaps (e.g., cuBLAS to rocBLAS), ensuring the AI does not hallucinate library calls during its reasoning steps.
+
+---
+
+## 28 Apr 2026, 01:00 PM · @Arya
+
+## CUDA → HIP Translation Datasets Overview
+
+### Dataset: MBZUAI/cass
+   - Link: https://huggingface.co/datasets/MBZUAI/cass  
+   - Size: 70k+ CUDA/HIP source + assembly pairs  
+   - Challenge: Requires understanding PTX-to-AMDGCN assembly lowering rather than simple API regex matching  
+   > **Why it is the best:** It uniquely bridges the 4B model capacity gap by providing massive, verified assembly-level ground truth, eliminating the structural hallucinations that standard datasets cause.
+
+
+### Dataset: gustavostahl/cass
+   - Link: https://github.com/gustavostahl/cass  
+   - Contents: CASS pipeline + 40-sample benchmark  
+   - Challenge: Automates rigorous compilation validation, testing the model's ability to survive real-world compiler strictness  
+
+
+### Dataset: ROCm/hip tests
+   - Link: https://github.com/ROCm/hip/tree/develop/tests  
+   - Contents: Hundreds of CUDA → HIP test cases  
+   - Challenge: Contains complex, undocumented edge cases and corner cases designed to break AMD's own transpiler  
+
+
+### Dataset: The Stack v2
+   - Link: https://huggingface.co/datasets/bigcode/the-stack-v2  
+   - Contents: Millions of code files (CUDA subset)  
+   - Challenge: Highly unstructured; requires building complex AST-parsing pipelines to extract valid, non-trivial parallel macro blocks  
+   
+
+### Dataset: HeCBench
+   - Link: https://github.com/zjin-lcf/HeCBench  
+   - Contents: 100+ complex kernel applications  
+   - Challenge: Tests full-application numerical precision (RMSE < 10^-5) and complex memory divergence, not just syntax validation  
+
+
+### Dataset: HPCTransCompile
+   - Link: https://github.com/PJLAB-CHIP/HPCTransCompile  
+   - Contents: Thousands of synthetic pairs  
+   - Challenge: Injects dense, highly-optimized AI-compiler lowerings that push the model's structural context window to its limits  
+
+
+### Dataset: PyTorch ATen Native GPU Operators
+   - Link: https://github.com/pytorch/pytorch/tree/main/aten/src/ATen/native/cuda  
+   - Contents: Thousands of enterprise-grade kernels  
+   - Challenge: Involves multi-file dependencies, custom memory allocators, and advanced warp synchronizations  
+   
