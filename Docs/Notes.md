@@ -142,4 +142,20 @@ Successfully completed end-to-end stress testing and validation of the primary t
 
 ---
 
+## 29 Apr 2026, 12:02 AM · @Ayush
+
+### Infrastructure & Environment Perfection
+1. **Persistence & Portability**: Updated `setup_venv.sh` to permanently configure `PATH` and `ROCM_PATH` in `~/.bashrc`. This ensures that `bitsandbytes` and `unsloth` always detect the ROCm hardware correctly upon login.
+2. **Setup Automation**: Verified the full end-to-end automation of the DigitalOcean droplet initialization, resolving the `rocminfo` and Flash Attention 2 detection warnings.
+
+### Dataset Analytics & Tokenizer Planning
+1. **Large-Scale Data Counting**: Developed `data_counter.py` and `data_counter-1.py` to analyze the entire cleaned corpus.
+2. **Corpus Statistics**:
+   - **Combined Output**: Analyzed 301,129 rows totaling **1.001 Billion characters** (~250M estimated tokens).
+   - **Remaining Parts**: Analyzed 64,602 rows (cass & nvidia parts) totaling **470 Million characters** (~117M estimated tokens).
+3. **Tokenizer Insights**: Extracted critical metrics including character vocabulary size (1,949 unique chars) and max sequence lengths (76k chars) to guide the `gemma4` fine-tuning configuration.
+
+---
+
+
 
