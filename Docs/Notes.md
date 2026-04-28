@@ -157,5 +157,12 @@ Successfully completed end-to-end stress testing and validation of the primary t
 
 ---
 
+## 29 Apr 2026, 01:13 AM · @Arya
+
+### Model Serve via vLLM.      [Status:Done]
+ *   **Model Used:** `Qwen 3.5 (0.8B)`.
+ *   **File/Code-base Location:** `vLLM/qwen-vLLM`
+
+---
 
 
