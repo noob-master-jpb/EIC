@@ -6,8 +6,8 @@
 
 ### 2. The Dataset Requirement
    * **The Dataset:** The CASS (CUDA-AMD ASsembly and Source Mapping) dataset.
-   > **Dataset Link:** https://huggingface.co/datasets/MBZUAI/cass 
    * **Why it's essential:** It provides 70,000 functionally verified pairs and aligns high-level code with raw device-level assembly instructions (Nvidia's SASS and AMD's RDNA3). 
+   > **Dataset Link:** https://huggingface.co/datasets/MBZUAI/cass
 
 ### 3. Distillation Strategy: Will it beat HIPIFY?
    * **Yes:** Standard fine-tuning is insufficient, but a method called Embarrassingly Simple Self-Distillation (SSD) easily outperforms HIPIFY.
