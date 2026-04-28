@@ -139,4 +139,10 @@ Successfully completed end-to-end stress testing and validation of the primary t
 
 ---
 
+## 28 Apr 2026, 01:00 PM · @Arya
 
+### CUDA → HIP Translation Datasets Overview. [Status:Done]
+
+ * Founded the datasets for model distillation, present in file `Dataset.md` 
+
+---
