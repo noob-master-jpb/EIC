@@ -6,7 +6,7 @@
 
 ### 2. The Dataset Requirement
    * **The Dataset:** The CASS (CUDA-AMD ASsembly and Source Mapping) dataset.
-   * **Dataset Link:** https://huggingface.co/datasets/MBZUAI/cass 
+   > **Dataset Link:** https://huggingface.co/datasets/MBZUAI/cass 
    * **Why it's essential:** It provides 70,000 functionally verified pairs and aligns high-level code with raw device-level assembly instructions (Nvidia's SASS and AMD's RDNA3). 
 
 ### 3. Distillation Strategy: Will it beat HIPIFY?
