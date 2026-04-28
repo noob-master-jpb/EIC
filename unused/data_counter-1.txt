@@ -1,0 +1,37 @@
+--- Per-Row Character Counts ---
+(Showing first 15 rows across all files to prevent terminal flooding)
+Row = 0 | No. of characters under problem: 275 | No. of characters under solution: 250
+Row = 1 | No. of characters under problem: 314 | No. of characters under solution: 289
+Row = 2 | No. of characters under problem: 3029 | No. of characters under solution: 3004
+Row = 3 | No. of characters under problem: 2548 | No. of characters under solution: 2523
+Row = 4 | No. of characters under problem: 7772 | No. of characters under solution: 7747
+Row = 5 | No. of characters under problem: 838 | No. of characters under solution: 813
+4276
+Row = 11 | No. of characters under problem: 794 | No. of characters under solution: 755
+Row = 12 | No. of characters under problem: 3917 | No. of characters under solution: 3823
+Row = 13 | No. of characters under problem: 20640 | No. of characters under solution: 2746
+Row = 14 | No. of characters under problem: 429 | No. of characters under solution: 404
+...
+(Remaining rows omitted for terminal readability)
+
+
+============================================================
+                COMBINED DATASET SUMMARY
+============================================================
+Files Processed  : 3
+Total Rows       : 64,602
+Total characters under 'problem' : 240,153,466
+Total characters under 'solution': 229,963,449
+Total characters in dataset      : 470,116,915
+
+============================================================
+          TOKENIZER PLANNING METRICS (EXTRA INFO)
+============================================================
+Total unique characters (Char Vocab Size): 1,092
+Total approximate words (Whitespace split): 57,330,251
+Max characters in a single 'problem' : 76,013
+Max characters in a single 'solution': 75,766
+Average characters per 'problem'     : 3,717.43
+Average characters per 'solution'    : 3,559.70
+
+Approximate total tokens (assuming ~4 chars/token): 117,529,229
