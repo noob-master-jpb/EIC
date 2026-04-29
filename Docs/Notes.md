@@ -138,7 +138,7 @@ Successfully completed end-to-end stress testing and validation of the primary t
  *   **Current Solution:** Served via a local **Ollama** instance (llama.cpp), which has specialized support for the `gemma4` architecture and its reasoning/thinking tokens.
     
 ### 28 Apr 2026, 03:50 PM · @Arya 
- > Proposed Solution: Fine-Tuning Gemma 4 for CUDA to ROCm Conversion, Given in `Solutions.md`. [Status:Done]
+ * Proposed Solution: Fine-Tuning Gemma 4 for CUDA to ROCm Conversion, Given in `Solutions.md`. [Status:Done]
 
 ---
 
