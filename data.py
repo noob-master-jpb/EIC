@@ -23,6 +23,23 @@ def load_dataset(path:str):
         raise ValueError("Unsupported file format")
     return df
 
+def split_dataset(df, split=0.8, random_seed=42):
+    """
+    Splits a pandas DataFrame into training and validation sets.
+
+    Args:
+        df (pandas.DataFrame): The dataset to be split.
+        split (float): The percentage of data for the training set. Default is 0.8.
+        random_seed (int): The seed for reproducibility. Default is 42.
+
+    Returns:
+        tuple: Two DataFrames containing the training set and validation set.
+    """
+    train_df = df.sample(frac=split, random_state=random_seed)
+    val_df = df.drop(train_df.index)
+    
+    return train_df, val_df
+
 def format_dataset(df:pd.DataFrame,user_prompt:str,agent_response:str,as_hf_dataset:bool=True):
     """
     Args:
@@ -246,4 +263,4 @@ def combine_dataset(
 
 
 if __name__ == "__main__":
-    pass
+    pass
