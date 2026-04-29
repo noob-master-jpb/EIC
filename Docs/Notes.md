@@ -165,4 +165,19 @@ Successfully completed end-to-end stress testing and validation of the primary t
 
 ---
 
+## 30 Apr 2026, 01:50 AM · @Ayush
+
+### Dataset Diversity Validation & Scoring
+1. **Mathematically Optimized Scorer**: Developed `diversity_scorer.py` using a high-performance linear algebra trick ($O(N)$ complexity) to calculate average pairwise cosine distance without requiring a memory-heavy $O(N^2)$ matrix.
+2. **Success Metrics (Subsampling Proof)**:
+   - Successfully cross-verified the **11,723 row diverse subset** against the **64,036 row original dataset**.
+   - **Result**: The selected subset (K-Means selection performed by **@Ankan**) achieved a **2.69% increase in Total Variance** while being **82% smaller**. This proves the K-Means selection effectively pruned redundant data while increasing the overall semantic spread.
+   - **Stability Fix**: Resolved `float16` precision overflow issues in the scoring script by implementing strategic `float32` upscaling for squared-magnitude calculations.
+
+### Extended Dataset Analytics
+1. **NVIDIA Compute Evaluation**: Profiled `nvidia_compute_eval.parquet`, identifying **1.65 Million tokens** (6.6M characters) of high-quality compute logic for the training pool.
+2. **Environmental Cleanup**: Suppressed `transformers` load warnings in the diagnostic tools for cleaner terminal output and faster automated reporting.
+
+---
+
 
