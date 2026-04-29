@@ -58,6 +58,7 @@ trainer = SFTTrainer(
     model = model,
     tokenizer = tokenizer,
     train_dataset = train_dataset,
+    eval_dataset = eval_dataset,
     dataset_text_field = "text", 
     max_seq_length = 2048,
     packing = True, 
