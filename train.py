@@ -37,7 +37,7 @@ tokenizer = get_chat_template(
 dataset = combine_dataset(paths=["./Datasets/cass_part1.parquet", "./Datasets/cass_part2.parquet"],
                           output_mapping=["query","output"],)
 
-train,val = split_dataset(dataset, val_size=0.1, seed=3407)
+train,val = split_dataset(dataset, split=0.1, seed=3407)
 train_dataset = process_dataset(
     df = train,
     user_prompt = "query", 
