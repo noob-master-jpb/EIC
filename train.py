@@ -34,10 +34,16 @@ tokenizer = get_chat_template(
     chat_template = "gemma-4"
 )
 
-dataset = combine_dataset(paths=["./Datasets/cass_part1.parquet", "./Datasets/cass_part2.parquet"],
-                          output_mapping=["query","output"],)
+dataset = combine_dataset(
+    paths=["./Datasets/cass_part1.parquet", "./Datasets/cass_part2.parquet"],
+    column_mapping={
+        "./Datasets/cass_part1.parquet": ["problem", "answer"],
+        "./Datasets/cass_part2.parquet": ["problem", "answer"],
+    },
+    output_mapping=["query", "output"],
+)
 
-train,val = split_dataset(dataset, split=0.1, seed=3407)
+train, val = split_dataset(dataset, split=0.9, random_seed=3407)
 train_dataset = process_dataset(
     df = train,
     user_prompt = "query", 
