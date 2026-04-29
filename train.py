@@ -4,8 +4,8 @@ from unsloth.chat_templates import get_chat_template
 from trl import SFTConfig, SFTTrainer
 from data import process_dataset, combine_dataset, split_dataset
 
-REPO="google"
-MODEL = "gemma-4-31B"
+REPO="unsloth"
+MODEL = "gemma-4-31B-it"
 MODEL_ID = f"{REPO}/{MODEL}"
 OUTPUT_DIR = f"./{MODEL}-finetuned"
 
@@ -13,17 +13,17 @@ model, tokenizer = FastLanguageModel.from_pretrained(
     model_name = MODEL_ID,
     max_seq_length = 2048,
     load_in_4bit = False, 
-    use_gradient_checkpointing = "unsloth",
+    use_gradient_checkpointing = False,
 )
 
 model = FastLanguageModel.get_peft_model(
     model,
-    r = 1, 
+    r = 16 , 
     target_modules = [
         "q_proj", "k_proj", "v_proj", "o_proj",
         "gate_proj", "up_proj", "down_proj"
     ], 
-    lora_alpha = 4,
+    lora_alpha = 16,
     lora_dropout = 0,
     bias = "none",    
     random_state = 3407,
@@ -43,7 +43,7 @@ dataset = combine_dataset(
     output_mapping=["query", "output"],
 )
 
-train, val = split_dataset(dataset, split=0.9, random_seed=3407)
+train, val = split_dataset(dataset, split=0.998, random_seed=3407)
 train_dataset = process_dataset(
     df = train,
     user_prompt = "query", 
@@ -70,13 +70,16 @@ trainer = SFTTrainer(
     packing = True, 
     args = SFTConfig(
         output_dir = OUTPUT_DIR,
+        dataset_num_proc = 4,
         eval_strategy = "steps",
-        eval_steps = 10,
-        per_device_train_batch_size = 16, 
-        gradient_accumulation_steps = 6,
-        learning_rate = 2e-4,
+        eval_steps = 5,
+        per_device_train_batch_size = 45, 
+        gradient_accumulation_steps = 1,
+        learning_rate = 1e-7,
+        max_grad_norm = 1.0,
+        warmup_steps = 100,
         bf16 = True,
-        num_train_epochs = .2, 
+        num_train_epochs = .5, 
         logging_steps = 1,
         save_steps = 500,
         optim = "adamw_8bit", 
@@ -93,7 +96,7 @@ try:
 except KeyboardInterrupt:
     print("\nTraining interrupted by user. Saving the model at the current state...")
 
-print("Saving model and tokenizer to ./gemma-4-finetuned-final")
+print(f"Saving model and tokenizer to {OUTPUT_DIR}")
 model.save_pretrained(OUTPUT_DIR)
-tokenizer.save_pretrained(f"{OUTPUT_DIR}-final")
+tokenizer.save_pretrained(OUTPUT_DIR)
 print("Save complete!")
