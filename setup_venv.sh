@@ -72,13 +72,13 @@ echo "[7/8] Force-Installing PyTorch (ROCm 7.2)..."
 # installed by Unsloth/dependencies is completely replaced by the ROCm-specific version.
 uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm7.2 --upgrade --force-reinstall
 
-echo ""
-echo "[8/8] Cloning git repository EIC..."
-if [ -d "EIC" ]; then
-    echo "Directory 'EIC' already exists. Skipping clone."
-else
-    git clone https://github.com/noob-master-jpb/EIC.git
-fi
+# echo ""
+# echo "[8/8] Cloning git repository EIC..."
+# if [ -d "EIC" ]; then
+#     echo "Directory 'EIC' already exists. Skipping clone."
+# else
+#     git clone https://github.com/noob-master-jpb/EIC.git
+# fi
 
 echo ""
 echo "============================================================"

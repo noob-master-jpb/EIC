@@ -5,7 +5,7 @@ from trl import SFTConfig, SFTTrainer
 from data import process_dataset, combine_dataset, split_dataset
 
 REPO="unsloth"
-MODEL = "gemma-4-31B-it"
+MODEL = "gemma-4-26B-A4B-it"
 MODEL_ID = f"{REPO}/{MODEL}"
 OUTPUT_DIR = f"./{MODEL}-finetuned"
 
@@ -75,9 +75,9 @@ trainer = SFTTrainer(
         eval_steps = 5,
         per_device_train_batch_size = 45, 
         gradient_accumulation_steps = 1,
-        learning_rate = 1e-7,
+        learning_rate = 1e-4,
         max_grad_norm = 1.0,
-        warmup_steps = 100,
+        warmup_steps = 32,
         bf16 = True,
         num_train_epochs = .5, 
         logging_steps = 1,
@@ -87,6 +87,8 @@ trainer = SFTTrainer(
         seed = 3407,
         dataloader_num_workers = 16, 
         dataloader_pin_memory = True,
+        torch_compile = False,
+        # torch_compile_backend = "inductor",
     ),
 )
 
