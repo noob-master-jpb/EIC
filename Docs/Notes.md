@@ -202,3 +202,45 @@ Successfully completed end-to-end stress testing and validation of the primary t
 - **Performance Benchmarking:** Identified BiLLM as the "Fast and Accurate" choice for ultra-low bit-widths (~1.1 bit), outperforming PB-LLM (~1.7 bit) in both perplexity and inference potential.
 - **Strategic Advantages:** Documented PB-LLM's strengths in **Quantization-Aware Training (QAT)** and native hardware support for its INT8 components.
 - **Docs Updated:** Summarized trade-offs between PTQ efficiency and surgical precision.
+
+## 1 May 2026, 4:15 AM · @Ankan
+
+### Training Pipeline Optimization & Validation `[Status: Done]`
+
+The training pipeline has been optimized for the **Gemma 4 31B** model on the `cass` dataset, including full validation runs across all model sizes.
+
+#### Loss Metrics
+
+| Metric | 31B-Dense | 26B-MoE | 4B | 2B |
+| :--- | :---: | :---: | :---: | :---: |
+| **Training Loss** | ~1.7 | ~3.3 | ~15 | ~17 |
+| **Validation Loss** | ~1.7 | ~3.3 | ~0.9 | ~0.9 |
+
+> [!NOTE]
+> The unusually low validation loss on the 4B and 2B models is suspected to be caused by a difference in loss calculation methodology between dense/MoE and smaller models.
+
+#### 1-Epoch Training Time
+
+**Config:** Batch size 45 · Dataset 60k rows · 1k tokens/row (input + output) · Hardware: 1× MI300X GPU · Refer to `cass` dataset.
+
+| Model | 31B-Dense | 26B-MoE | 4B | 2B |
+| :--- | :---: | :---: | :---: | :---: |
+| **Est. Time** | > 20h | > 8h | > 2h | < 2h |
+
+---
+
+### Distillation Pipeline Validation `[Status: Ongoing]`
+
+- **Phase 1** — GLM-5 distillation for 500 rows of `nvidia_compute_eval` is at **60%** completion. Total estimated time: **10–12 hours** for 500 datapoints via DigitalOcean Serverless API (bottlenecked by rate limits and latency).
+- **Phase 2** — Conversion of the retrieved 500 datapoints to ROCm/HIP. Estimated time: **~10 hours**.
+- **Final Phase (Revised)** — Changed from GLM-5 distillation to **Qwen 3 72B** on **12,000 datapoints** running directly on the MI300X GPU.
+
+---
+
+### Model Binarization Research `[Status: Upcoming]`
+
+**Selected Method: PB-LLM**
+
+1. **PTQ Efficiency** — PB-LLM's magnitude-based weight selection enables a more straightforward and computationally efficient Post-Training Quantization (PTQ) process, which is crucial given our resource constraints.
+2. **QAT Compatibility** — PB-LLM's use of INT8 for salient weights is more compatible with Quantization-Aware Training (QAT) techniques, enabling better fine-tuning and optimization.
+3. **Ease of Implementation** — PB-LLM's partial binarization approach is generally simpler to implement and integrate into existing training pipelines compared to BiLLM's more complex binary residual approximation.
