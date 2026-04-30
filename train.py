@@ -1,14 +1,25 @@
 import torch
+import os
 from unsloth import FastLanguageModel
 from unsloth.chat_templates import get_chat_template
 from trl import SFTConfig, SFTTrainer
 from data import process_dataset, combine_dataset, split_dataset
-
+# import multiprocessing
 REPO="unsloth"
-MODEL = "gemma-4-26B-A4B-it"
+MODEL = "gemma-4-E2B-it"
 MODEL_ID = f"{REPO}/{MODEL}"
 OUTPUT_DIR = f"./{MODEL}-finetuned"
 
+# torch._inductor.config.dce = True
+# torch._inductor.config.epilogue_fusion = False
+# torch._inductor.config.triton.cudagraphs = False
+# torch._inductor.config.compile_threads = multiprocessing.cpu_count()
+# # Skips the exhaustive search for the fastest kernels
+# torch._inductor.config.max_autotune = False
+# torch._inductor.config.max_autotune_gemm = False
+
+# # Skips autotuning for simple element-wise operations (like Add/Mul)
+# torch._inductor.config.triton.autotune_pointwise = False
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name = MODEL_ID,
     max_seq_length = 2048,
@@ -43,22 +54,29 @@ dataset = combine_dataset(
     output_mapping=["query", "output"],
 )
 
-train, val = split_dataset(dataset, split=0.998, random_seed=3407)
-train_dataset = process_dataset(
-    df = train,
-    user_prompt = "query", 
-    agent_response = "output",
-    processor = tokenizer, 
-    num_proc = 1 
-)
+if os.path.exists("./processed_train"):
+    train_dataset = load_from_disk("./processed_train")
+    eval_dataset = load_from_disk("./processed_eval")
+else:
+    train, val = split_dataset(dataset, split=0.99, random_seed=3407)
+    train_dataset = process_dataset(
+        df = train,
+        user_prompt = "query", 
+        agent_response = "output",
+        processor = tokenizer, 
+        num_proc = 1 
+    )
 
-eval_dataset = process_dataset(
-    df = val,
-    user_prompt = "query", 
-    agent_response = "output",
-    processor = tokenizer, 
-    num_proc = 1
-)
+    eval_dataset = process_dataset(
+        df = val,
+        user_prompt = "query", 
+        agent_response = "output",
+        processor = tokenizer, 
+        num_proc = 1
+    )
+
+    train_dataset.save_to_disk("./processed_train")
+    eval_dataset.save_to_disk("./processed_eval")
 
 trainer = SFTTrainer(
     model = model,
@@ -87,8 +105,9 @@ trainer = SFTTrainer(
         seed = 3407,
         dataloader_num_workers = 16, 
         dataloader_pin_memory = True,
-        torch_compile = True,
-        torch_compile_backend = "inductor",
+        # torch_compile = True,
+        # torch_compile_backend = "inductor",
+        # torch_compile_mode = "default",
     ),
 )
 

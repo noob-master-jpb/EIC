@@ -93,7 +93,8 @@ def process_dataset(df: str | pd.DataFrame | None = None, user_prompt: str = Non
     final_ds = dataset.map(
         lambda x: {"text": processor.apply_chat_template(x["messages"], tokenize=False)},
         remove_columns=["messages"],
-        num_proc=num_proc
+        num_proc=num_proc,
+        load_from_cache_file = True,
     )
     return final_ds
 
