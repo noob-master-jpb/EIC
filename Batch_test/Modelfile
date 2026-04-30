@@ -1,0 +1,3 @@
+FROM ./qwen3.5-0.8b-local
+
+PARAMETER temperature 0.2

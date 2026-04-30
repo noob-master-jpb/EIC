@@ -1,0 +1,7 @@
+[
+  "Write a one-line explanation of what batch prompting means.",
+  "Give three benefits of running prompts concurrently.",
+  "Create a short greeting for a hackathon demo.",
+  "Summarize why local Ollama models are useful for prototypes.",
+  "Return the phrase: batch prompt response test"
+]
