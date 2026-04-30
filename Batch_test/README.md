@@ -72,55 +72,29 @@ It should be a JSON array:
 
 ## Dataset Output Format
 
-The output JSON has this structure:
+The output JSON is a clean array of records:
 
 ```json
-{
-  "dataset_name": "ollama_batch_polishing_dataset",
-  "model": "qwen3.5:0.8b",
-  "record_count": 5,
-  "created_at": "2026-04-30T00:00:00+00:00",
-  "records": [
-    {
-      "id": "batch-0001",
-      "instruction": "Original prompt",
-      "input": "",
-      "output": "Model response",
-      "raw_response": "Uncleaned model response",
-      "metadata": {
-        "index": 1,
-        "model": "qwen3.5:0.8b",
-        "source": "ollama_batch_dataset",
-        "ok": true,
-        "seconds": 1.23,
-        "created_at": "2026-04-30T00:00:00+00:00"
-      }
-    }
-  ]
-}
+[
+  {
+    "id": "batch-0001",
+    "input": "Original prompt from prompts.json",
+    "output": "Cleaned AI model response",
+    "raw_response": "Uncleaned model response (includes <think> tags etc.)"
+  }
+]
 ```
 
-Use `output` as the polished dataset answer. Keep `raw_response` for debugging.
+Use `output` for your final results. Keep `raw_response` for debugging.
 
-## Options
+## Configuration
 
-Run only three prompts:
+To change settings, edit the **CONFIGURATION** block at the top of `batch_dataset_ollama.py`:
 
-```bash
-python batch_dataset_ollama.py --batch-size 3
-```
-
-Change response length:
-
-```bash
-python batch_dataset_ollama.py --max-tokens 80
-```
-
-Write to another JSON file:
-
-```bash
-python batch_dataset_ollama.py --output my_dataset.json
-```
+- `BATCH_SIZE`: How many prompts to process.
+- `MAX_TOKENS`: Maximum length of the AI response.
+- `TEMPERATURE`: Controls creativity (lower is more focused).
+- `MODEL`: The name of the local model to use.
 
 ## Support Files
 
@@ -130,4 +104,4 @@ python batch_dataset_ollama.py --output my_dataset.json
 
 ---
 
-> I have installed and used the model in LOCAL MACHINE.
+>NOTE: I have installed and used the model in LOCAL MACHINE.

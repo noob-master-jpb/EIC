@@ -180,4 +180,14 @@ Successfully completed end-to-end stress testing and validation of the primary t
 
 ---
 
+## 30 Apr 2026, 09:08 PM · @Arya
 
+## Distillation Part: Batch Dataset Generator.  [Status:Done]
+
+- **Simplified Script:** Refactored to a variable-driven config (no terminal args needed).
+- **Clean Output:** Formatted JSON to strictly use `id`, `input`, `output`, and `raw_response`.
+- **Git Security:** Updated `.gitignore` to exclude large model files and local logs.
+- **Optimized:** Enabled concurrent processing and added input validation.
+- **Ready to Run:** Updated README with a simple one-command workflow.
+- **Working Folder:** `Batch_test`.
+---

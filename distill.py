@@ -8,14 +8,14 @@ load_dotenv()
 url = "https://inference.do-ai.run/v1/chat/completions"
 headers = {
     "Content-Type": "application/json",
-    "Authorization": f"Bearer {os.getenv('YOUR_MODEL_ACCESS_KEY')}"
+    "Authorization": f"Bearer {os.getenv('DO_TOKEN')}"
 }
 data = {
     "model": "glm-5",
     "messages": [
         {
             "role": "user",
-            "content": "What is the capital of France?"
+            "content": "WAP to implement fibonacci series in python upto 6"
         }
     ],
     "max_tokens": 1024,
