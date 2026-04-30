@@ -191,3 +191,14 @@ Successfully completed end-to-end stress testing and validation of the primary t
 - **Ready to Run:** Updated README with a simple one-command workflow.
 - **Working Folder:** `Batch_test`.
 ---
+
+## 30 Apr 2026, 11:45 PM · @Ayush
+
+## LLM Binarization Research: BiLLM vs PB-LLM
+
+- **Comparative Analysis:** Conducted a deep-dive comparison of BiLLM and PB-LLM implementations based on technical papers.
+- **Saliency Strategies:** Contrasted BiLLM's **Binary Residual Approximation** (salient weights as two 1-bit components) against PB-LLM's **Partial Binarization** (salient weights as INT8).
+- **Metric Evaluation:** Analyzed selection metrics—**Hessian-based structural selection** (BiLLM) vs. **Magnitude-based element-wise selection** (PB-LLM).
+- **Performance Benchmarking:** Identified BiLLM as the "Fast and Accurate" choice for ultra-low bit-widths (~1.1 bit), outperforming PB-LLM (~1.7 bit) in both perplexity and inference potential.
+- **Strategic Advantages:** Documented PB-LLM's strengths in **Quantization-Aware Training (QAT)** and native hardware support for its INT8 components.
+- **Docs Updated:** Summarized trade-offs between PTQ efficiency and surgical precision.
