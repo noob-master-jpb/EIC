@@ -18,7 +18,11 @@ data = {
             "content": "What is the capital of France?"
         }
     ],
-    "max_tokens": 100
+    "max_tokens": 1024,
+    "chat_template_kwargs": {
+        "enable_thinking": False
+    }, 
+    "stream_options": {"include_usage": True}
 }
 
 response = requests.post(url, headers=headers, json=data)
