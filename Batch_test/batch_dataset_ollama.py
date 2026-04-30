@@ -18,7 +18,6 @@ from typing import Any
 
 
 # --- CONFIGURATION ---
-# Script directory setup
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 # Model and Server Settings
@@ -35,23 +34,48 @@ PROMPTS_PATH = SCRIPT_DIR / "prompts.json"
 OUTPUT_PATH = SCRIPT_DIR / "polishing_dataset.json"
 MODELFILE_PATH = SCRIPT_DIR / "Modelfile"
 
-# Ollama Backend Paths (Relative to script dir)
-OLLAMA_BIN = (SCRIPT_DIR / "../amd_hckn/backend/ollama").resolve()
-OLLAMA_LIB = (SCRIPT_DIR / "../amd_hckn/backend/lib/ollama").resolve()
+# --- PORTABLE PATH DISCOVERY ---
+# This looks for the bundled Ollama in common relative locations
+def find_ollama_paths():
+    # 1. Check relative to script (../amd_hckn/backend/)
+    possible_bin = (SCRIPT_DIR / "../amd_hckn/backend/ollama").resolve()
+    possible_lib = (SCRIPT_DIR / "../amd_hckn/backend/lib/ollama").resolve()
+    
+    if possible_bin.exists():
+        return possible_bin, possible_lib
+
+    # 2. Check current directory (if script was moved)
+    local_bin = SCRIPT_DIR / "ollama"
+    local_lib = SCRIPT_DIR / "lib/ollama"
+    if local_bin.exists():
+        return local_bin, local_lib
+
+    # 3. Fallback to system ollama if bundled is not found
+    try:
+        system_bin = subprocess.run(["which", "ollama"], capture_output=True, text=True).stdout.strip()
+        if system_bin:
+            return Path(system_bin), None
+    except Exception:
+        pass
+        
+    return possible_bin, possible_lib # Default to original if nothing found
+
+OLLAMA_BIN, OLLAMA_LIB = find_ollama_paths()
 OLLAMA_LOG = SCRIPT_DIR / "ollama_server.log"
 # ---------------------
 
 def load_dotenv() -> None:
-    env_path = SCRIPT_DIR / ".env"
-    if not env_path.exists():
-        return
-
-    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+    # Look for .env in current dir and parent dir
+    for search_dir in [SCRIPT_DIR, SCRIPT_DIR.parent]:
+        env_path = search_dir / ".env"
+        if env_path.exists():
+            for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+            break
 
 
 def read_prompts() -> list[str]:
@@ -107,8 +131,10 @@ def start_ollama_if_needed() -> subprocess.Popen[str] | None:
         return None
 
     env = os.environ.copy()
-    lib_path = str(OLLAMA_LIB)
-    env["LD_LIBRARY_PATH"] = f"{lib_path}:{env['LD_LIBRARY_PATH']}" if env.get("LD_LIBRARY_PATH") else lib_path
+    if OLLAMA_LIB:
+        lib_path = str(OLLAMA_LIB)
+        env["LD_LIBRARY_PATH"] = f"{lib_path}:{env['LD_LIBRARY_PATH']}" if env.get("LD_LIBRARY_PATH") else lib_path
+    
     env.setdefault("OLLAMA_NUM_PARALLEL", str(CONCURRENCY))
 
     print(f"Starting Ollama server at {HOST}")
@@ -140,8 +166,9 @@ def register_model_if_needed() -> None:
         return
 
     env = os.environ.copy()
-    lib_path = str(OLLAMA_LIB)
-    env["LD_LIBRARY_PATH"] = f"{lib_path}:{env['LD_LIBRARY_PATH']}" if env.get("LD_LIBRARY_PATH") else lib_path
+    if OLLAMA_LIB:
+        lib_path = str(OLLAMA_LIB)
+        env["LD_LIBRARY_PATH"] = f"{lib_path}:{env['LD_LIBRARY_PATH']}" if env.get("LD_LIBRARY_PATH") else lib_path
 
     print(f"Registering model: {MODEL}")
     subprocess.run(
@@ -249,5 +276,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
