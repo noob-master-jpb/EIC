@@ -4,22 +4,13 @@ from unsloth import FastLanguageModel
 from unsloth.chat_templates import get_chat_template
 from trl import SFTConfig, SFTTrainer
 from data import process_dataset, combine_dataset, split_dataset
-# import multiprocessing
+from datasets import load_from_disk
+
 REPO="unsloth"
 MODEL = "gemma-4-E2B-it"
 MODEL_ID = f"{REPO}/{MODEL}"
 OUTPUT_DIR = f"./{MODEL}-finetuned"
 
-# torch._inductor.config.dce = True
-# torch._inductor.config.epilogue_fusion = False
-# torch._inductor.config.triton.cudagraphs = False
-# torch._inductor.config.compile_threads = multiprocessing.cpu_count()
-# # Skips the exhaustive search for the fastest kernels
-# torch._inductor.config.max_autotune = False
-# torch._inductor.config.max_autotune_gemm = False
-
-# # Skips autotuning for simple element-wise operations (like Add/Mul)
-# torch._inductor.config.triton.autotune_pointwise = False
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name = MODEL_ID,
     max_seq_length = 2048,

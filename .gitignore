@@ -7,3 +7,4 @@ Datasets/*.txt
 Datasets/combined_output.parquet
 unsloth*
 venv
+.env
