@@ -165,18 +165,41 @@ def register_model_if_needed() -> None:
         print(f"Model already available: {MODEL}")
         return
 
+    print(f"\n[!] Model '{MODEL}' not found in Ollama.")
+    print("How would you like to set it up?")
+    print(f"1. Download automatically (ollama pull {MODEL})")
+    print(f"2. Register manually from a local Modelfile")
+    
+    try:
+        choice = input("Enter choice (1 or 2): ").strip()
+    except EOFError:
+        print("No input detected. Exiting.")
+        sys.exit(1)
+
     env = os.environ.copy()
     if OLLAMA_LIB:
         lib_path = str(OLLAMA_LIB)
         env["LD_LIBRARY_PATH"] = f"{lib_path}:{env['LD_LIBRARY_PATH']}" if env.get("LD_LIBRARY_PATH") else lib_path
 
-    print(f"Registering model: {MODEL}")
-    subprocess.run(
-        [str(OLLAMA_BIN), "create", MODEL, "-f", str(MODELFILE_PATH)],
-        cwd=SCRIPT_DIR,
-        env=env,
-        check=True,
-    )
+    if choice == "1":
+        print(f"Pulling model {MODEL}... this may take a few minutes.")
+        subprocess.run([str(OLLAMA_BIN), "pull", MODEL], env=env, check=True)
+    elif choice == "2":
+        path_str = input("Enter the full path to your Modelfile: ").strip()
+        manual_modelfile = Path(path_str).resolve()
+        if not manual_modelfile.exists():
+            print(f"Error: Modelfile not found at {manual_modelfile}")
+            sys.exit(1)
+        print(f"Creating model {MODEL} from {manual_modelfile}...")
+        subprocess.run(
+            [str(OLLAMA_BIN), "create", MODEL, "-f", str(manual_modelfile)],
+            cwd=manual_modelfile.parent,
+            env=env,
+            check=True,
+        )
+    else:
+        print("Invalid choice. Please run the script again and select 1 or 2.")
+        sys.exit(1)
 
 
 def call_ollama(prompt: str) -> str:
@@ -248,9 +271,8 @@ def main() -> int:
         # Simple validation
         if not OLLAMA_BIN.exists():
             raise FileNotFoundError(f"Ollama binary not found: {OLLAMA_BIN}")
-        if not MODELFILE_PATH.exists():
-            raise FileNotFoundError(f"Modelfile not found: {MODELFILE_PATH}")
-
+        
+        # We don't strictly need MODELFILE_PATH anymore if we pull or create manually
         ollama_process = start_ollama_if_needed()
         register_model_if_needed()
         print("Generating reusable JSON dataset...")
