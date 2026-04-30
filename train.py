@@ -87,8 +87,8 @@ trainer = SFTTrainer(
         seed = 3407,
         dataloader_num_workers = 16, 
         dataloader_pin_memory = True,
-        torch_compile = False,
-        # torch_compile_backend = "inductor",
+        torch_compile = True,
+        torch_compile_backend = "inductor",
     ),
 )
 
