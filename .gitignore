@@ -8,3 +8,4 @@ Datasets/combined_output.parquet
 unsloth*
 venv
 .env
+qwen3.5-0.8b-local/
