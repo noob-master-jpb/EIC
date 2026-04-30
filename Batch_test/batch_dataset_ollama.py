@@ -29,6 +29,15 @@ TEMPERATURE = 0.2
 CONCURRENCY = 5
 TIMEOUT = 240
 
+# --- AUTOMATIC SETUP ---
+# Set to True to automatically download the model if missing
+AUTO_DOWNLOAD_MODEL = True
+
+# OR paste a full path to a Modelfile here to register it manually
+# Example: MANUAL_MODEL_PATH = "/home/user/Modelfile"
+MANUAL_MODEL_PATH = "" 
+# -----------------------
+
 # File Paths
 PROMPTS_PATH = SCRIPT_DIR / "prompts.json"
 OUTPUT_PATH = SCRIPT_DIR / "polishing_dataset.json"
@@ -166,40 +175,35 @@ def register_model_if_needed() -> None:
         return
 
     print(f"\n[!] Model '{MODEL}' not found in Ollama.")
-    print("How would you like to set it up?")
-    print(f"1. Download automatically (ollama pull {MODEL})")
-    print(f"2. Register manually from a local Modelfile")
     
-    try:
-        choice = input("Enter choice (1 or 2): ").strip()
-    except EOFError:
-        print("No input detected. Exiting.")
-        sys.exit(1)
-
     env = os.environ.copy()
     if OLLAMA_LIB:
         lib_path = str(OLLAMA_LIB)
         env["LD_LIBRARY_PATH"] = f"{lib_path}:{env['LD_LIBRARY_PATH']}" if env.get("LD_LIBRARY_PATH") else lib_path
 
-    if choice == "1":
-        print(f"Pulling model {MODEL}... this may take a few minutes.")
+    # Try Manual Path first if provided
+    if MANUAL_MODEL_PATH:
+        manual_modelfile = Path(MANUAL_MODEL_PATH).resolve()
+        if manual_modelfile.exists():
+            print(f"Creating model {MODEL} from {manual_modelfile}...")
+            subprocess.run(
+                [str(OLLAMA_BIN), "create", MODEL, "-f", str(manual_modelfile)],
+                cwd=manual_modelfile.parent,
+                env=env,
+                check=True,
+            )
+            return
+        else:
+            print(f"Error: MANUAL_MODEL_PATH set but file not found: {MANUAL_MODEL_PATH}")
+
+    # Try Auto Download if enabled
+    if AUTO_DOWNLOAD_MODEL:
+        print(f"Auto-downloading model {MODEL}... this may take a few minutes.")
         subprocess.run([str(OLLAMA_BIN), "pull", MODEL], env=env, check=True)
-    elif choice == "2":
-        path_str = input("Enter the full path to your Modelfile: ").strip()
-        manual_modelfile = Path(path_str).resolve()
-        if not manual_modelfile.exists():
-            print(f"Error: Modelfile not found at {manual_modelfile}")
-            sys.exit(1)
-        print(f"Creating model {MODEL} from {manual_modelfile}...")
-        subprocess.run(
-            [str(OLLAMA_BIN), "create", MODEL, "-f", str(manual_modelfile)],
-            cwd=manual_modelfile.parent,
-            env=env,
-            check=True,
-        )
-    else:
-        print("Invalid choice. Please run the script again and select 1 or 2.")
-        sys.exit(1)
+        return
+
+    print(f"Error: Model {MODEL} is missing and no setup method (Auto-download or Manual Path) is configured.")
+    sys.exit(1)
 
 
 def call_ollama(prompt: str) -> str:
@@ -272,7 +276,6 @@ def main() -> int:
         if not OLLAMA_BIN.exists():
             raise FileNotFoundError(f"Ollama binary not found: {OLLAMA_BIN}")
         
-        # We don't strictly need MODELFILE_PATH anymore if we pull or create manually
         ollama_process = start_ollama_if_needed()
         register_model_if_needed()
         print("Generating reusable JSON dataset...")
