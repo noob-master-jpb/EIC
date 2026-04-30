@@ -189,5 +189,5 @@ Successfully completed end-to-end stress testing and validation of the primary t
 - **Git Security:** Updated `.gitignore` to exclude large model files and local logs.
 - **Optimized:** Enabled concurrent processing and added input validation.
 - **Ready to Run:** Updated README with a simple one-command workflow.
-
+- **Working Folder:** `Batch_test`.
 ---
