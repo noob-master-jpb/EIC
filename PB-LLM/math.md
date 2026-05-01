@@ -12,7 +12,9 @@ Crucially, this document also shows **exactly where** each mathematical formula 
 
 In standard neural networks, a weight matrix $W \in \mathbb{R}^{d_{out} \times d_{in}}$ contains floating-point numbers (FP16 or BF16). 
 A pure Binarized Neural Network (BNN) tries to force every weight into $\{-1, +1\}$ using the Sign function:
-$$ B = \text{sign}(W) $$
+```math
+B = \text{sign}(W)
+```
 
 **Why does this fail for LLMs?**
 LLMs (like Qwen and Gemma) learn through **"Outlier Features"**. A tiny fraction of their weights (often less than 1%) have massive magnitudes. These specific weights act as critical routing mechanisms for syntax, grammar, and factual recall. 
@@ -35,12 +37,16 @@ Let $S$ be the `salient_ratio` (e.g., $S = 0.01$, meaning 1%).
 
 First, we need to mathematically define what an "outlier" is for this specific matrix. We do this by looking at the absolute magnitudes of the weights.
 1. Calculate the number of weights to protect, $k$:
-   $$ k = \lfloor \text{TotalElements}(W) \times S \rfloor $$
+   ```math
+k = \lfloor \text{TotalElements}(W) \times S \rfloor
+```
 2. Flatten the matrix into a 1D vector and take the absolute values: $|W|$.
 3. Sort $|W|$ in descending order to find the $k$-th largest value. This value becomes our threshold, $\tau$.
 
 **The Formula:**
-$$ \tau = \text{TopK\_Value}(|W|, k) $$
+```math
+\tau = \text{TopK\_Value}(|W|, k)
+```
 
 **Where this happens in `pb_llm_pipeline.py`:**
 ```python
@@ -57,10 +63,14 @@ threshold_val = threshold[-1].item()
 
 We divide the matrix into two distinct sets using boolean masks.
 * **Salient Mask ($M_{salient}$):** 
-  $$ M_{salient} = |W| \ge \tau $$
+  ```math
+M_{salient} = |W| \ge \tau
+```
   (This mask is `True` for the 1% of massive weights).
 * **Non-Salient Mask ($M_{non\_salient}$):** 
-  $$ M_{non\_salient} = |W| < \tau $$
+  ```math
+M_{non\_salient} = |W| < \tau
+```
   (This mask is `True` for the 99% of normal/small weights).
 
 **Where this happens in `pb_llm_pipeline.py`:**
@@ -81,7 +91,9 @@ For the 99% of weights that are non-salient, we will turn them into 1-bit. Howev
 To fix this, we calculate a scalar value $\alpha$ that represents the average magnitude of the non-salient weights.
 
 **The Formula:**
-$$ \alpha = \frac{1}{|M_{non\_salient}|} \sum_{W_{ij} \in M_{non\_salient}} |W_{ij}| $$
+```math
+\alpha = \frac{1}{|M_{non\_salient}|} \sum_{W_{ij} \in M_{non\_salient}} |W_{ij}|
+```
 
 **Where this happens in `pb_llm_pipeline.py`:**
 ```python
@@ -98,10 +110,14 @@ alpha = (non_salient_weights.to(torch.float32).abs().mean().to(self.weight.dtype
 Now we binarize the 99% of normal weights.
 
 **The Formula:**
-$$ B = \text{sign}(W) \times \alpha $$
+```math
+B = \text{sign}(W) \times \alpha
+```
 
 Where:
-$$ \text{sign}(x) = \begin{cases} +1 & \text{if } x > 0 \\ -1 & \text{if } x \le 0 \end{cases} $$
+```math
+\text{sign}(x) = \begin{cases} +1 & \text{if } x > 0 \\ -1 & \text{if } x \le 0 \end{cases}
+```
 
 **Where this happens in `pb_llm_pipeline.py`:**
 ```python
@@ -117,10 +133,12 @@ binarized_non_salient = SignSTE.apply(self.weight) * alpha
 Finally, we reconstruct the weight matrix $W'$ that will actually be used by the LLM for inference.
 
 **The Formula:**
-$$ W'_{ij} = \begin{cases} 
+```math
+W'_{ij} = \begin{cases} 
       W_{ij} & \text{if } M_{salient} \text{ is True (keep original FP16)} \\
       B_{ij} & \text{if } M_{non\_salient} \text{ is True (use } \pm\alpha \text{)}
-   \end{cases} $$
+   \end{cases}
+```
 
 **Where this happens in `pb_llm_pipeline.py`:**
 ```python
@@ -143,13 +161,19 @@ setattr(model, name, PBLLMLinear(module, salient_ratio))
 **How does text generation mathematically work now?**
 
 In a Transformer, the core calculation inside every layer is a linear transformation (a matrix multiplication) of the input tokens $X$ against the weight matrix:
-$$ Y = X W^T $$
+```math
+Y = X W^T
+```
 
 With PB-LLM, this becomes:
-$$ Y = X (W')^T $$
+```math
+Y = X (W')^T
+```
 
 Because matrix multiplication is distributive, PyTorch is implicitly calculating:
-$$ Y = X (W_{salient})^T + X (B_{non\_salient})^T $$
+```math
+Y = X (W_{salient})^T + X (B_{non\_salient})^T
+```
 
 **Where this happens in `pb_llm_pipeline.py`:**
 ```python
