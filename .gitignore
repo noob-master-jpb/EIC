@@ -8,9 +8,6 @@ Datasets/combined_output.parquet
 unsloth*
 venv
 .env
-<<<<<<< HEAD
-BiLLM.pdf
-PB-LLM.pdf
-=======
 qwen3.5-0.8b-local/
->>>>>>> 3b0632babd53dd0148a77e0214ed7f6f532086ac
+.vscode
+__pycache__
