@@ -1,0 +1,32 @@
+[
+  {
+    "id": "batch-0001",
+    "input": "Write a one-line explanation of what batch prompting means.",
+    "output": "Batch prompting is a technique where a user provides a large block of text to a model, allowing the model to process it in chunks to improve accuracy and efficiency.",
+    "raw_response": "<think>\n\n</think>\n\n Batch prompting is a technique where a user provides a large block of text to a model, allowing the model to process it in chunks to improve accuracy and efficiency."
+  },
+  {
+    "id": "batch-0002",
+    "input": "Give three benefits of running prompts concurrently.",
+    "output": "Running prompts concurrently offers several distinct advantages that can significantly enhance productivity and workflow efficiency:\n\n1.  **Accelerated Iteration and Testing**\n    When multiple prompts are active simultaneously, you can rapidly test different ideas, styles, or solutions without waiting for the previous one to complete. This allows you to iterate on a single task or a set of related tasks much faster, enabling you to find the best solution sooner rather than later.\n\n2.  **Reduced Cognitive Load and Mental Fatigue**\n    Running prompts in parallel prevents the brain from having to process all",
+    "raw_response": "<think>\n\n</think>\n\nRunning prompts concurrently offers several distinct advantages that can significantly enhance productivity and workflow efficiency:\n\n1.  **Accelerated Iteration and Testing**\n    When multiple prompts are active simultaneously, you can rapidly test different ideas, styles, or solutions without waiting for the previous one to complete. This allows you to iterate on a single task or a set of related tasks much faster, enabling you to find the best solution sooner rather than later.\n\n2.  **Reduced Cognitive Load and Mental Fatigue**\n    Running prompts in parallel prevents the brain from having to process all"
+  },
+  {
+    "id": "batch-0003",
+    "input": "Create a short greeting for a hackathon demo.",
+    "output": "\"Hello! I'm [Your Name], and I'm thrilled to be here for the [Hackathon Name] demo. Let's get to work and see what we can build together!\"",
+    "raw_response": "<think>\n\n</think>\n\n\"Hello! I'm [Your Name], and I'm thrilled to be here for the [Hackathon Name] demo. Let's get to work and see what we can build together!\""
+  },
+  {
+    "id": "batch-0004",
+    "input": "Summarize why local Ollama models are useful for prototypes.",
+    "output": "Local Ollama models are highly useful for prototyping because they offer **zero latency**, **zero network overhead**, and **zero data loss**.\n\nHere is a breakdown of why they excel in this specific context:\n\n*   **Instant Feedback Loop**: Since the model runs entirely on your device, you can run the same code, interact with the same data, and see the results immediately without waiting for a server to process the request. This allows for rapid iteration and testing of complex logic.\n*   **No Latency**: Unlike cloud-based models that might have thousands",
+    "raw_response": "<think>\n\n</think>\n\nLocal Ollama models are highly useful for prototyping because they offer **zero latency**, **zero network overhead**, and **zero data loss**.\n\nHere is a breakdown of why they excel in this specific context:\n\n*   **Instant Feedback Loop**: Since the model runs entirely on your device, you can run the same code, interact with the same data, and see the results immediately without waiting for a server to process the request. This allows for rapid iteration and testing of complex logic.\n*   **No Latency**: Unlike cloud-based models that might have thousands"
+  },
+  {
+    "id": "batch-0005",
+    "input": "Return the phrase: batch prompt response test",
+    "output": "batch prompt response test",
+    "raw_response": "<think>\n\n</think>\n\nbatch prompt response test"
+  }
+]
