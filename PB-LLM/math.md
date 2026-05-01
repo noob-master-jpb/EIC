@@ -50,7 +50,7 @@ $$
 **The Formula:**
 
 $$
-\tau = \text{TopK\_Value}(|W|, k)
+\tau = \text{TopK_Value}(|W|, k)
 $$
 
 
