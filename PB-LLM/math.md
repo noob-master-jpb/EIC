@@ -50,7 +50,7 @@ $$
 **The Formula:**
 
 $$
-\tau = \text{TopK_Value}(|W|, k)
+\tau = \text{TopK}(|W|, k)
 $$
 
 
@@ -75,10 +75,10 @@ M_{salient} = |W| \ge \tau
 $$
 
   (This mask is `True` for the 1% of massive weights).
-* **Non-Salient Mask ($M_{non\_salient}$):** 
+* **Non-Salient Mask ($M_{non_salient}$):** 
   
 $$
-M_{non\_salient} = |W| < \tau
+M_{non_salient} = |W| < \tau
 $$
 
   (This mask is `True` for the 99% of normal/small weights).
@@ -103,7 +103,7 @@ To fix this, we calculate a scalar value $\alpha$ that represents the average ma
 **The Formula:**
 
 $$
-\alpha = \frac{1}{|M_{non\_salient}|} \sum_{W_{ij} \in M_{non\_salient}} |W_{ij}|
+\alpha = \frac{1}{|M_{non_salient}|} \sum_{W_{ij} \in M_{non_salient}} |W_{ij}|
 $$
 
 
@@ -153,7 +153,7 @@ Finally, we reconstruct the weight matrix $W'$ that will actually be used by the
 $$
 W'_{ij} = \begin{cases} 
       W_{ij} & \text{if } M_{salient} \text{ is True (keep original FP16)} \\
-      B_{ij} & \text{if } M_{non\_salient} \text{ is True (use } \pm\alpha \text{)}
+      B_{ij} & \text{if } M_{non_salient} \text{ is True (use } \pm\alpha \text{)}
    \end{cases}
 $$
 
@@ -195,7 +195,7 @@ $$
 Because matrix multiplication is distributive, PyTorch is implicitly calculating:
 
 $$
-Y = X (W_{salient})^T + X (B_{non\_salient})^T
+Y = X (W_{salient})^T + X (B_{non_salient})^T
 $$
 
 
@@ -207,7 +207,7 @@ outputs = quantized_model.generate(**inputs, max_new_tokens=100)
 
 **Why does this result in coherent English?**
 1. **The $X (W_{salient})^T$ part:** The input tokens multiply against the exact, high-precision outlier weights. This calculation preserves the critical attention routing and factual data retrieval perfectly.
-2. **The $X (B_{non\_salient})^T$ part:** The input tokens multiply against the sea of $+\alpha$ and $-\alpha$. Because this is a massive sum of binary numbers, it acts as a robust, distributed associative memory. Small rounding errors cancel each other out across the 4096+ dimensions.
+2. **The $X (B_{non_salient})^T$ part:** The input tokens multiply against the sea of $+\alpha$ and $-\alpha$. Because this is a massive sum of binary numbers, it acts as a robust, distributed associative memory. Small rounding errors cancel each other out across the 4096+ dimensions.
 
 The output vector $Y$ remains mathematically close enough to the original unquantized $Y$ that the final Softmax probability distribution still heavily favors the correct next word in the sentence.
 
