@@ -244,3 +244,15 @@ The training pipeline has been optimized for the **Gemma 4 31B** model on the `c
 1. **PTQ Efficiency** — PB-LLM's magnitude-based weight selection enables a more straightforward and computationally efficient Post-Training Quantization (PTQ) process, which is crucial given our resource constraints.
 2. **QAT Compatibility** — PB-LLM's use of INT8 for salient weights is more compatible with Quantization-Aware Training (QAT) techniques, enabling better fine-tuning and optimization.
 3. **Ease of Implementation** — PB-LLM's partial binarization approach is generally simpler to implement and integrate into existing training pipelines compared to BiLLM's more complex binary residual approximation.
+---
+
+## 1 May 2026, 10:33 PM · @Ayush
+
+### Distillation Dataset Preparation
+1. **CUDA-to-ROCm Prompt Engineering**: Developed `create_distill_dataset.py` to transform the `nvidia_compute_eval_glm5.jsonl` dataset into a specialized distillation format.
+2. **Dataset Transformation**:
+   - Prepended a task-specific instruction: *"Convert this CUDA kernal to ROCm/HIP kernal"* to all 565 entries.
+   - Initialized a blank `Response` column to facilitate structured output generation during the distillation process.
+3. **Storage Strategy**: Exported the processed dataset to **`cuda_to_rocm_distill.parquet`** for high-performance loading and compatibility with the Unsloth/Hugging Face ecosystem.
+
+---
