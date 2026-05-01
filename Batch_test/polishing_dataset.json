@@ -1,32 +1,102 @@
 [
   {
-    "id": "batch-0001",
-    "input": "Write a one-line explanation of what batch prompting means.",
-    "output": "",
-    "raw_response": ""
+    "id": 0,
+    "model": "qwen3.5:0.8b",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Write a one-line explanation of what batch prompting means."
+      }
+    ],
+    "output": "Batch prompting refers to the practice of grouping multiple user prompts together into a single request for the model.",
+    "metadata": {
+      "created_at": "2026-05-01T10:14:31.858800302Z",
+      "prompt_eval_count": 21,
+      "prompt_eval_duration": 21598422,
+      "eval_count": 3746,
+      "eval_duration": 23966304852,
+      "total_duration": 79484745486,
+      "load_duration": 2586049075
+    }
   },
   {
-    "id": "batch-0002",
-    "input": "Give three benefits of running prompts concurrently.",
+    "id": 1,
+    "model": "qwen3.5:0.8b",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Give three benefits of running prompts concurrently."
+      }
+    ],
     "output": "",
-    "raw_response": ""
+    "metadata": {
+      "created_at": "2026-05-01T10:14:04.541072527Z",
+      "prompt_eval_count": 18,
+      "prompt_eval_duration": 20133511,
+      "eval_count": 6755,
+      "eval_duration": 47020034709,
+      "total_duration": 52166914412,
+      "load_duration": 2585444725
+    }
   },
   {
-    "id": "batch-0003",
-    "input": "Create a short greeting for a hackathon demo.",
-    "output": "",
-    "raw_response": ""
+    "id": 2,
+    "model": "qwen3.5:0.8b",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Create a short greeting for a hackathon demo."
+      }
+    ],
+    "output": "Here are a few short options depending on the tone you want to set:\n\n1.  **Professional & Encouraging:**\n    > \"Welcome to the Hackathon! Let's get started. We need your ideas to help us solve our problems.\"\n\n2.  **Friendly & Inviting:**\n    > \"Hi there! Welcome to the event. Let's create something amazing together.\"\n\n3.  **Short & Punchy:**\n    > \"Hello! Let's get started. We hope you join us.\"\n\nFeel free to let me know if you want to adjust the tone or audience type!",
+    "metadata": {
+      "created_at": "2026-05-01T10:14:53.956034921Z",
+      "prompt_eval_count": 20,
+      "prompt_eval_duration": 14287056,
+      "eval_count": 3511,
+      "eval_duration": 21038993771,
+      "total_duration": 101581981294,
+      "load_duration": 2585751056
+    }
   },
   {
-    "id": "batch-0004",
-    "input": "Summarize why local Ollama models are useful for prototypes.",
-    "output": "",
-    "raw_response": ""
+    "id": 3,
+    "model": "qwen3.5:0.8b",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Summarize why local Ollama models are useful for prototypes."
+      }
+    ],
+    "output": "**Why Local Ollama Models are Useful for Prototypes**\n\nRunning models locally (on your machine) rather than online provides several distinct advantages for prototype development:\n\n*   **Privacy and Security:** You are not exposing your system's data or sensitive information to any public server.\n*   **Total Control:** You can set the inference engine and model state exactly where you want it to run.\n*   **Cost-Effective:** You avoid the expenses associated with cloud infrastructure and data storage costs.\n*   **No Dependency on Internet:** Models can run entirely offline or without external internet connectivity.\n*   **Resource Efficiency:** It requires fewer compute resources and storage compared to public cloud services.\n*   **Customization:** You can fine-tune or tweak the model architecture to suit specific tasks without external dependencies.\n*   **Reduced Latency:** No internet latency or synchronization delays, as everything runs locally.\n\nThese factors make them ideal for creating and iterating ideas quickly and safely in the prototype phase.",
+    "metadata": {
+      "created_at": "2026-05-01T10:15:07.520611362Z",
+      "prompt_eval_count": 24,
+      "prompt_eval_duration": 18604244,
+      "eval_count": 2179,
+      "eval_duration": 12908252320,
+      "total_duration": 115146528051,
+      "load_duration": 2586149998
+    }
   },
   {
-    "id": "batch-0005",
-    "input": "Return the phrase: batch prompt response test",
-    "output": "",
-    "raw_response": ""
+    "id": 4,
+    "model": "qwen3.5:0.8b",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Return the phrase: batch prompt response test"
+      }
+    ],
+    "output": "batch prompt response test",
+    "metadata": {
+      "created_at": "2026-05-01T10:14:06.641669408Z",
+      "prompt_eval_count": 18,
+      "prompt_eval_duration": 21634006,
+      "eval_count": 292,
+      "eval_duration": 1969942377,
+      "total_duration": 54267614591,
+      "load_duration": 2585881662
+    }
   }
 ]

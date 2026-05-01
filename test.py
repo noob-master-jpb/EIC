@@ -1,79 +1,70 @@
-import os
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-from transformers import AutoProcessor, AutoModelForCausalLM
-import torch 
-import re
-from typing import Dict
+from pathlib import Path
+
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
+REPO_DIR = Path(__file__).resolve().parent
+MODEL_DIR = REPO_DIR / "models" / "Qwen3-0.6B-ternary-1bit-codex"
+LOAD_DTYPE = torch.float16
+PREFER_CUDA = True
+MAX_NEW_TOKENS = 48
+DO_SAMPLE = False
 
-MODEL_ID = "./models/gemma-4-E2B-it"
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-# Configuration
-TOKENIZE = False
-ENABLE_THINKING = False
-
-# Load model
-processor = AutoProcessor.from_pretrained(MODEL_ID)
-from transformers import BitsAndBytesConfig
-
-quantization_config = BitsAndBytesConfig(
-    load_in_4bit=True,
-    bnb_4bit_compute_dtype=torch.bfloat16,
-    bnb_4bit_quant_type="nf4",
-    bnb_4bit_use_double_quant=True
-)
-
-
-model = AutoModelForCausalLM.from_pretrained(
-    MODEL_ID,
-    device_map={"": 0},
-    quantization_config=quantization_config,
-    low_cpu_mem_usage=True
-)
-# Prompt
-messages = [
-    {"role": "system", "content": [{"type": "text", "text": "You are a helpful assistant."}]},
-    {"role": "user", "content": [{"type": "text", "text": """
-Explain the logic of a binary search algorithm.
-    """}]},
+SMOKE_PROMPTS = [
+    "Explain what a ternary 1-bit language model is in one short paragraph.",
+    "Write a CUDA kernel optimization tip in two sentences.",
+    "Give three short bullets about quantization-aware training.",
 ]
 
-# Process input
-inputs_data = processor.apply_chat_template(
-    messages, 
-    tokenize=TOKENIZE, 
-    add_generation_prompt=True, 
-    enable_thinking=ENABLE_THINKING,
-    return_dict=True,
-    return_tensors="pt" if TOKENIZE else None
-)
 
-if not TOKENIZE:
-    print("--- Raw Prompt (Tokenizer Off) ---")
-    print(inputs_data)
-    # Manually tokenize for the model
-    inputs = processor(text=inputs_data, return_tensors="pt", add_special_tokens=False).to(model.device)
-else:
-    inputs = inputs_data.to(model.device)
+def runtime_device() -> str:
+    if PREFER_CUDA and torch.cuda.is_available():
+        return "cuda"
+    return "cpu"
 
-input_len = inputs["input_ids"].shape[-1]
-print(f"Input Token Length: {input_len}")
 
-# Generate output
-outputs = model.generate(**inputs, max_new_tokens=1024)
-response = processor.decode(outputs[0][input_len:], skip_special_tokens=False)
+def main() -> None:
+    if not MODEL_DIR.exists():
+        print(f"Error: model path does not exist: {MODEL_DIR}")
+        return
 
-# Parse and print output
-print("--- Raw Response ---")
-print(response)
-print("--- Parsed Response (Native Gemma 4 Parser) ---")
-# Using the native parser implemented in gemma.py
+    device = runtime_device()
+    dtype = LOAD_DTYPE if device == "cuda" else torch.float32
 
-parsed_data = processor.parse_response(response)
+    print(f"Loading model from: {MODEL_DIR}")
+    print(f"Using device: {device}")
 
-# if parsed_data["thinking"]:
-#     print(f"THINKING:\n{parsed_data['thinking']}\n")
-# print(f"ANSWER:\n{parsed_data['answer']}")
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
 
-print('\n',parsed_data)
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL_DIR,
+        dtype=dtype,
+        low_cpu_mem_usage=True,
+    )
+    model.to(device)
+    model.eval()
+
+    for index, prompt in enumerate(SMOKE_PROMPTS, start=1):
+        inputs = tokenizer(prompt, return_tensors="pt")
+        inputs = {key: value.to(device) for key, value in inputs.items()}
+
+        with torch.no_grad():
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=MAX_NEW_TOKENS,
+                do_sample=DO_SAMPLE,
+                pad_token_id=tokenizer.pad_token_id,
+            )
+
+        text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        print(f"\n=== Smoke Prompt {index} ===")
+        print(prompt)
+        print("--- Response ---")
+        print(text)
+
+
+if __name__ == "__main__":
+    main()

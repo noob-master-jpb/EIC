@@ -1,303 +1,267 @@
-#!/usr/bin/env python3
-"""One-command Ollama batch prompt dataset generator."""
+"""Batch prompt Ollama with parallel requests."""
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
-import re
-import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Dict, List, Optional, Tuple
 
 
-# --- CONFIGURATION ---
-SCRIPT_DIR = Path(__file__).resolve().parent
-
-# Model and Server Settings
 MODEL = "qwen3.5:0.8b"
 HOST = "http://127.0.0.1:11434"
-BATCH_SIZE = 5
-MAX_TOKENS = 120
-TEMPERATURE = 0.2
-CONCURRENCY = 5
-TIMEOUT = 240
-
-# --- AUTOMATIC SETUP ---
-# Set to True to automatically download the model if missing
-AUTO_DOWNLOAD_MODEL = True
-
-# OR paste a full path to a Modelfile here to register it manually
-# Example: MANUAL_MODEL_PATH = "/home/user/Modelfile"
-MANUAL_MODEL_PATH = "" 
-# -----------------------
-
-# File Paths
-PROMPTS_PATH = SCRIPT_DIR / "prompts.json"
-OUTPUT_PATH = SCRIPT_DIR / "polishing_dataset.json"
-MODELFILE_PATH = SCRIPT_DIR / "Modelfile"
-
-# --- PORTABLE PATH DISCOVERY ---
-# This looks for the bundled Ollama in common relative locations
-def find_ollama_paths():
-    # 1. Check relative to script (../amd_hckn/backend/)
-    possible_bin = (SCRIPT_DIR / "../amd_hckn/backend/ollama").resolve()
-    possible_lib = (SCRIPT_DIR / "../amd_hckn/backend/lib/ollama").resolve()
-    
-    if possible_bin.exists():
-        return possible_bin, possible_lib
-
-    # 2. Check current directory (if script was moved)
-    local_bin = SCRIPT_DIR / "ollama"
-    local_lib = SCRIPT_DIR / "lib/ollama"
-    if local_bin.exists():
-        return local_bin, local_lib
-
-    # 3. Fallback to system ollama if bundled is not found
-    try:
-        system_bin = subprocess.run(["which", "ollama"], capture_output=True, text=True).stdout.strip()
-        if system_bin:
-            return Path(system_bin), None
-    except Exception:
-        pass
-        
-    return possible_bin, possible_lib # Default to original if nothing found
-
-OLLAMA_BIN, OLLAMA_LIB = find_ollama_paths()
-OLLAMA_LOG = SCRIPT_DIR / "ollama_server.log"
-# ---------------------
-
-def load_dotenv() -> None:
-    # Look for .env in current dir and parent dir
-    for search_dir in [SCRIPT_DIR, SCRIPT_DIR.parent]:
-        env_path = search_dir / ".env"
-        if env_path.exists():
-            for raw_line in env_path.read_text(encoding="utf-8").splitlines():
-                line = raw_line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, value = line.split("=", 1)
-                os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
-            break
+PROMPTS_PATH = "Batch_test/prompts.json"
+OUTPUT_PATH = "Batch_test/polishing_dataset.json"
+MAX_WORKERS = 0
+TIMEOUT = 120.0
+RETRIES = 2
+BACKOFF = 0.5
+TEMPERATURE: Optional[float] = None
+TOP_P: Optional[float] = None
+TOP_K: Optional[int] = None
+NUM_PREDICT: Optional[int] = None
+STOP_TOKENS: Optional[List[str]] = None
+DRY_RUN = False
 
 
-def read_prompts() -> list[str]:
-    if not PROMPTS_PATH.exists():
-        raise FileNotFoundError(f"Prompts file not found: {PROMPTS_PATH}")
-    data = json.loads(PROMPTS_PATH.read_text(encoding="utf-8"))
-    if not isinstance(data, list) or not all(isinstance(item, str) for item in data):
-        raise ValueError(f"{PROMPTS_PATH} must contain a JSON array of prompt strings.")
-    if not data:
-        raise ValueError(f"{PROMPTS_PATH} does not contain any prompts.")
-    return data
+def _parse_stop_tokens(value: Optional[object]) -> Optional[List[str]]:
+	if not value:
+		return None
+	if isinstance(value, list):
+		return [str(item) for item in value if str(item)]
+	if isinstance(value, str):
+		text = value.strip()
+		if not text:
+			return None
+		if text.startswith("["):
+			try:
+				parsed = json.loads(text)
+			except json.JSONDecodeError:
+				parsed = None
+			if isinstance(parsed, list):
+				return [str(item) for item in parsed if str(item)]
+		return [part for part in (p.strip() for p in text.split(",")) if part]
+	return [str(value)]
 
 
-def clean_response(text: str) -> str:
-    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
-    cleaned = re.sub(r"\s*<think>.*$", "", cleaned, flags=re.DOTALL)
-    cleaned = cleaned.replace("</think>", "")
-    cleaned = re.sub(r"<\|[^>]+?\|>", "", cleaned)
-    cleaned = re.split(r"\n\s*Final answer\s*:?", cleaned, maxsplit=1, flags=re.IGNORECASE)[0]
-    cleaned = re.split(r"\n\s*Answer\s*:?", cleaned, maxsplit=1, flags=re.IGNORECASE)[0]
-    cleaned = cleaned.strip()
-
-    if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", cleaned)
-        cleaned = re.sub(r"\s*```$", "", cleaned)
-
-    parts = [part.strip() for part in re.split(r"\n{2,}", cleaned) if part.strip()]
-    if parts and all(part == parts[0] for part in parts):
-        return parts[0]
-    if len(parts) % 2 == 0 and parts[: len(parts) // 2] == parts[len(parts) // 2 :]:
-        return "\n\n".join(parts[: len(parts) // 2])
-
-    return cleaned.strip()
+def _load_prompts(path: str) -> List[Any]:
+	with open(path, "r", encoding="utf-8") as handle:
+		data = json.load(handle)
+	if isinstance(data, list):
+		return data
+	if isinstance(data, dict):
+		if "prompts" in data and isinstance(data["prompts"], list):
+			return data["prompts"]
+		return [data]
+	return [data]
 
 
-def ollama_is_running() -> bool:
-    try:
-        with urllib.request.urlopen(f"{HOST.rstrip('/')}/api/tags", timeout=3) as response:
-            return response.status == 200
-    except Exception:
-        return False
+def _normalize_messages(item: Any) -> Tuple[List[Dict[str, str]], Any]:
+	if isinstance(item, list) and all(isinstance(m, dict) for m in item):
+		return item, item
+	if isinstance(item, str):
+		return [{"role": "user", "content": item}], item
+	if isinstance(item, dict):
+		if "messages" in item and isinstance(item["messages"], list):
+			return item["messages"], item
+		system = item.get("system")
+		user = item.get("prompt") or item.get("input") or item.get("text")
+		if user is None:
+			raise ValueError("Prompt item missing 'prompt', 'input', or 'text'.")
+		messages: List[Dict[str, str]] = []
+		if system:
+			messages.append({"role": "system", "content": str(system)})
+		messages.append({"role": "user", "content": str(user)})
+		return messages, item
+	raise ValueError("Unsupported prompt item type.")
 
 
-def list_models() -> list[str]:
-    with urllib.request.urlopen(f"{HOST.rstrip('/')}/api/tags", timeout=10) as response:
-        body = json.loads(response.read().decode("utf-8"))
-    return [item["name"] for item in body.get("models", []) if "name" in item]
+def _post_json(url: str, payload: Dict[str, Any], timeout: float) -> Dict[str, Any]:
+	body = json.dumps(payload).encode("utf-8")
+	request = urllib.request.Request(
+		url,
+		data=body,
+		headers={"Content-Type": "application/json"},
+		method="POST",
+	)
+	with urllib.request.urlopen(request, timeout=timeout) as response:
+		raw = response.read().decode("utf-8")
+	return json.loads(raw)
 
 
-def start_ollama_if_needed() -> subprocess.Popen[str] | None:
-    if ollama_is_running():
-        print(f"Using existing Ollama server at {HOST}")
-        return None
-
-    env = os.environ.copy()
-    if OLLAMA_LIB:
-        lib_path = str(OLLAMA_LIB)
-        env["LD_LIBRARY_PATH"] = f"{lib_path}:{env['LD_LIBRARY_PATH']}" if env.get("LD_LIBRARY_PATH") else lib_path
-    
-    env.setdefault("OLLAMA_NUM_PARALLEL", str(CONCURRENCY))
-
-    print(f"Starting Ollama server at {HOST}")
-    log_file = OLLAMA_LOG.open("w", encoding="utf-8")
-    process = subprocess.Popen(
-        [str(OLLAMA_BIN), "serve"],
-        cwd=SCRIPT_DIR,
-        env=env,
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-
-    for _ in range(30):
-        if ollama_is_running():
-            return process
-        if process.poll() is not None:
-            break
-        time.sleep(1)
-
-    log_file.close()
-    raise RuntimeError(f"Ollama did not start. Check log: {OLLAMA_LOG}")
+def _call_ollama_chat(
+	host: str,
+	payload: Dict[str, Any],
+	timeout: float,
+	retries: int,
+	backoff: float,
+) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+	url = host.rstrip("/") + "/api/chat"
+	last_error: Optional[str] = None
+	for attempt in range(1, retries + 1):
+		try:
+			return _post_json(url, payload, timeout), None
+		except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as exc:
+			last_error = f"{type(exc).__name__}: {exc}"
+		except Exception as exc:  # noqa: BLE001
+			last_error = f"{type(exc).__name__}: {exc}"
+		if attempt < retries:
+			time.sleep(backoff * attempt)
+	return None, last_error
 
 
-def register_model_if_needed() -> None:
-    models = list_models()
-    if MODEL in models:
-        print(f"Model already available: {MODEL}")
-        return
-
-    print(f"\n[!] Model '{MODEL}' not found in Ollama.")
-    
-    env = os.environ.copy()
-    if OLLAMA_LIB:
-        lib_path = str(OLLAMA_LIB)
-        env["LD_LIBRARY_PATH"] = f"{lib_path}:{env['LD_LIBRARY_PATH']}" if env.get("LD_LIBRARY_PATH") else lib_path
-
-    # Try Manual Path first if provided
-    if MANUAL_MODEL_PATH:
-        manual_modelfile = Path(MANUAL_MODEL_PATH).resolve()
-        if manual_modelfile.exists():
-            print(f"Creating model {MODEL} from {manual_modelfile}...")
-            subprocess.run(
-                [str(OLLAMA_BIN), "create", MODEL, "-f", str(manual_modelfile)],
-                cwd=manual_modelfile.parent,
-                env=env,
-                check=True,
-            )
-            return
-        else:
-            print(f"Error: MANUAL_MODEL_PATH set but file not found: {MANUAL_MODEL_PATH}")
-
-    # Try Auto Download if enabled
-    if AUTO_DOWNLOAD_MODEL:
-        print(f"Auto-downloading model {MODEL}... this may take a few minutes.")
-        subprocess.run([str(OLLAMA_BIN), "pull", MODEL], env=env, check=True)
-        return
-
-    print(f"Error: Model {MODEL} is missing and no setup method (Auto-download or Manual Path) is configured.")
-    sys.exit(1)
+def _build_options(stop_tokens: Optional[List[str]]) -> Dict[str, Any]:
+	options: Dict[str, Any] = {}
+	if TEMPERATURE is not None:
+		options["temperature"] = TEMPERATURE
+	if TOP_P is not None:
+		options["top_p"] = TOP_P
+	if TOP_K is not None:
+		options["top_k"] = TOP_K
+	if NUM_PREDICT is not None:
+		options["num_predict"] = NUM_PREDICT
+	if stop_tokens:
+		options["stop"] = stop_tokens
+	return options
 
 
-def call_ollama(prompt: str) -> str:
-    payload = {
-        "model": MODEL,
-        "prompt": prompt,
-        "stream": False,
-        "options": {
-            "temperature": TEMPERATURE,
-            "num_predict": MAX_TOKENS,
-            "stop": ["<|endoftext|>", "<|im_start|>", "\nFinal answer:", "\nAnswer:"],
-        },
-    }
-    request = urllib.request.Request(
-        f"{HOST.rstrip('/')}/api/generate",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+def _build_record(
+	index: int,
+	item: Any,
+	messages: List[Dict[str, str]],
+	response: Optional[Dict[str, Any]],
+	error: Optional[str],
+	model: str,
+) -> Dict[str, Any]:
+	record_id = index
+	if isinstance(item, dict) and "id" in item:
+		record_id = item["id"]
 
-    try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
-            body: dict[str, Any] = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Ollama returned HTTP {exc.code}: {detail}") from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Could not reach Ollama at {HOST}") from exc
-
-    if "response" not in body:
-        raise RuntimeError(f"Ollama response did not include text: {body}")
-    return str(body["response"]).strip()
-
-
-async def generate_one(
-    index: int,
-    prompt: str,
-    semaphore: asyncio.Semaphore,
-) -> dict[str, Any]:
-    async with semaphore:
-        raw_response = ""
-        try:
-            raw_response = await asyncio.to_thread(call_ollama, prompt=prompt)
-            output = clean_response(raw_response)
-        except Exception:
-            output = "ERROR: Failed to generate response"
-
-    return {
-        "id": f"batch-{index:04d}",
-        "input": prompt,
-        "output": output,
-        "raw_response": raw_response,
-    }
+	record: Dict[str, Any] = {
+		"id": record_id,
+		"model": model,
+		"messages": messages,
+	}
+	if response is not None:
+		message = response.get("message")
+		if isinstance(message, dict):
+			record["output"] = message.get("content", "")
+		else:
+			record["output"] = response.get("response", "")
+		record["metadata"] = {
+			key: response.get(key)
+			for key in (
+				"created_at",
+				"prompt_eval_count",
+				"prompt_eval_duration",
+				"eval_count",
+				"eval_duration",
+				"total_duration",
+				"load_duration",
+			)
+			if key in response
+		}
+	if error:
+		record["error"] = error
+	return record
 
 
-async def generate_dataset() -> list[dict[str, Any]]:
-    prompts = read_prompts()[: BATCH_SIZE]
-    semaphore = asyncio.Semaphore(CONCURRENCY)
-    tasks = [
-        generate_one(index=index, prompt=prompt, semaphore=semaphore)
-        for index, prompt in enumerate(prompts, start=1)
-    ]
-    return await asyncio.gather(*tasks)
+def _generate_one(
+	index: int,
+	item: Any,
+	host: str,
+	model: str,
+	options: Dict[str, Any],
+	timeout: float,
+	retries: int,
+	backoff: float,
+) -> Dict[str, Any]:
+	messages, _ = _normalize_messages(item)
+	payload: Dict[str, Any] = {
+		"model": model,
+		"messages": messages,
+		"stream": False,
+	}
+	if options:
+		payload["options"] = options
+	response, error = _call_ollama_chat(host, payload, timeout, retries, backoff)
+	return _build_record(index, item, messages, response, error, model)
+
+
+def _print_diagnostics(
+	count: int,
+	max_workers: int,
+	stop_tokens: Optional[List[str]],
+) -> None:
+	print("Diagnostics:", flush=True)
+	print(f"  MODEL: {MODEL}", flush=True)
+	print(f"  HOST: {HOST}", flush=True)
+	print(f"  PROMPTS_PATH: {PROMPTS_PATH}", flush=True)
+	print(f"  OUTPUT_PATH: {OUTPUT_PATH}", flush=True)
+	print(f"  MAX_WORKERS: {max_workers}", flush=True)
+	if stop_tokens:
+		print(f"  STOP_TOKENS: {stop_tokens}", flush=True)
+	print(f"  PROMPT_COUNT: {count}", flush=True)
 
 
 def main() -> int:
-    load_dotenv()
-    try:
-        # Simple validation
-        if not OLLAMA_BIN.exists():
-            raise FileNotFoundError(f"Ollama binary not found: {OLLAMA_BIN}")
-        
-        ollama_process = start_ollama_if_needed()
-        register_model_if_needed()
-        print("Generating reusable JSON dataset...")
-        records = asyncio.run(generate_dataset())
-    except Exception as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
-    finally:
-        if "ollama_process" in locals() and ollama_process is not None:
-            ollama_process.terminate()
-            try:
-                ollama_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                ollama_process.kill()
+	stop_tokens = _parse_stop_tokens(STOP_TOKENS)
 
-    # Save as a clean list of records with only input and output
-    OUTPUT_PATH.write_text(json.dumps(records, indent=2, ensure_ascii=False), encoding="utf-8")
+	max_workers = MAX_WORKERS
+	if max_workers <= 0:
+		cpu_count = os.cpu_count() or 4
+		max_workers = min(32, cpu_count * 5)
 
-    print(f"\nGenerated {len(records)} records.")
-    print(f"JSON dataset saved to: {OUTPUT_PATH}")
-    return 0
+	prompts = _load_prompts(PROMPTS_PATH)
+	_print_diagnostics(len(prompts), max_workers, stop_tokens)
+
+	if DRY_RUN:
+		print("Dry run complete. No requests sent.", flush=True)
+		return 0
+
+	options = _build_options(stop_tokens)
+	results: List[Optional[Dict[str, Any]]] = [None] * len(prompts)
+
+	print("Generating JSON dataset with parallel workers...", flush=True)
+	with ThreadPoolExecutor(max_workers=max_workers) as executor:
+		futures = {
+			executor.submit(
+				_generate_one,
+				index,
+				item,
+				HOST,
+				MODEL,
+				options,
+				TIMEOUT,
+				RETRIES,
+				BACKOFF,
+			): index
+			for index, item in enumerate(prompts)
+		}
+		for future in as_completed(futures):
+			index = futures[future]
+			try:
+				results[index] = future.result()
+			except Exception as exc:  # noqa: BLE001
+				results[index] = {
+					"id": index,
+					"model": MODEL,
+					"messages": [],
+					"error": f"{type(exc).__name__}: {exc}",
+				}
+
+	output_records = [record for record in results if record is not None]
+	with open(OUTPUT_PATH, "w", encoding="utf-8") as handle:
+		json.dump(output_records, handle, ensure_ascii=True, indent=2)
+
+	print(f"Generated {len(output_records)} records.", flush=True)
+	print(f"JSON dataset saved to: {OUTPUT_PATH}", flush=True)
+	return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+	sys.exit(main())
