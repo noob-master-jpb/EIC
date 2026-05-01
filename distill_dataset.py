@@ -17,8 +17,8 @@ MAX_TOKENS      = 4096
 ENABLE_THINKING = False
 RETRY_DELAY     = 5    # seconds to wait before retrying a failed request
 START_ROW       = 1   # skip rows with index < this (already collected)
-BATCH_SIZE      = 2   # number of concurrent requests per batch
-BATCH_WAIT_MS   = 1000  # milliseconds to wait between batches
+BATCH_SIZE      = 1   # number of concurrent requests per batch
+BATCH_WAIT_MS   = 5000  # milliseconds to wait between batches
 # ─────────────────────────────────────────────────────────────────────────────
 
 URL = "https://inference.do-ai.run/v1/chat/completions"
