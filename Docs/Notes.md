@@ -246,7 +246,7 @@ The training pipeline has been optimized for the **Gemma 4 31B** model on the `c
 3. **Ease of Implementation** — PB-LLM's partial binarization approach is generally simpler to implement and integrate into existing training pipelines compared to BiLLM's more complex binary residual approximation.
 ---
 
-## 1 May 2026, 10:33 PM · @Ayush
+## 1 May 2026, 11:48 PM · @Ayush
 
 ### Distillation Dataset Preparation
 1. **CUDA-to-ROCm Prompt Engineering**: Developed `create_distill_dataset.py` to transform the `nvidia_compute_eval_glm5.jsonl` dataset into a specialized distillation format.
