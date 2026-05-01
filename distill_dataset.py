@@ -10,8 +10,8 @@ from tqdm import tqdm
 load_dotenv()
 
 # ── Config ────────────────────────────────────────────────────────────────────
-DATASET_PATH    = "./Datasets/nvidia_compute_eval.parquet"
-OUTPUT_PATH     = "./Datasets/nvidia_compute_eval_glm5.jsonl"
+DATASET_PATH    = "./Datasets/cuda_to_rocm_distill.parquet"
+OUTPUT_PATH     = "./Datasets/cuda_to_rocm_distill_glm5.jsonl"
 MODEL           = "glm-5"
 MAX_TOKENS      = 4096
 ENABLE_THINKING = False
@@ -105,7 +105,7 @@ def main():
 
     # Filter: skip rows below START_ROW and already-done indices
     pending = [
-        (int(idx), row["problem"])
+        (int(idx), row["Problem"])
         for idx, row in df.iterrows()
         if int(idx) >= START_ROW and int(idx) not in done_indices
     ]
