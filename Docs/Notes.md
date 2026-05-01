@@ -255,4 +255,16 @@ The training pipeline has been optimized for the **Gemma 4 31B** model on the `c
    - Initialized a blank `Response` column to facilitate structured output generation during the distillation process.
 3. **Storage Strategy**: Exported the processed dataset to **`cuda_to_rocm_distill.parquet`** for high-performance loading and compatibility with the Unsloth/Hugging Face ecosystem.
 
+### 📊 Project Status Overview (Current)
+*   **Accomplished**:
+    *   **Environment**: Full automation of MI300X/ROCm 7.2 droplets via `setup_venv.sh`.
+    *   **Data**: 1B+ character corpus cleaned; 11.7k diverse subset selected and verified.
+    *   **Training**: Pipeline verified for Gemma 4 (Dense/MoE); `Qwen 3.5` and `Gemma 4` successfully served.
+    *   **Research**: PB-LLM selected as the primary binarization strategy.
+*   **Remaining**:
+    *   **Distillation**: Finish GLM-5 Phase 1 (40% left); execute ROCm/HIP conversion (Phase 2).
+    *   **Binarization**: Implementation of PB-LLM (PTQ/QAT phases).
+    *   **Training**: Final 1-epoch fine-tune of **Gemma 4 31B** (Est. >20 hours).
+
+
 ---
