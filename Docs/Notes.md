@@ -268,3 +268,11 @@ The training pipeline has been optimized for the **Gemma 4 31B** model on the `c
 
 
 ---
+
+## 2 May 2026, 12:35 AM · @Arya 
+
+### PB-LLM Quantizer.  `[Status: Done]`
+Model ran successfully on my local gpu and might some minor changing in "Variables" of the python script, also might need some tweakes.
+ * Folder: `PB-LLM`
+ * `Math.md` and `README.md` contains proper instructions.
+
