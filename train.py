@@ -7,7 +7,7 @@ from data import process_dataset, combine_dataset, split_dataset
 from datasets import load_from_disk
 
 REPO="unsloth"
-MODEL = "gemma-4-E2B-it"
+MODEL = "gemma-4-31B-it"
 MODEL_ID = f"{REPO}/{MODEL}"
 OUTPUT_DIR = f"./{MODEL}-finetuned"
 
@@ -37,10 +37,11 @@ tokenizer = get_chat_template(
 )
 
 dataset = combine_dataset(
-    paths=["./Datasets/cass_part1.parquet", "./Datasets/cass_part2.parquet"],
+    paths=["./Datasets/cass_part1.parquet", "./Datasets/cass_part2.parquet","./Datasets/cuda_to_rocm_final.parquet"],
     column_mapping={
         "./Datasets/cass_part1.parquet": ["problem", "answer"],
         "./Datasets/cass_part2.parquet": ["problem", "answer"],
+        "./Datasets/cuda_to_rocm_final.parquet": ["problem", "answer"],
     },
     output_mapping=["query", "output"],
 )
@@ -82,13 +83,13 @@ trainer = SFTTrainer(
         dataset_num_proc = 4,
         eval_strategy = "steps",
         eval_steps = 5,
-        per_device_train_batch_size = 45, 
-        gradient_accumulation_steps = 1,
+        per_device_train_batch_size = 40, 
+        gradient_accumulation_steps = 2,
         learning_rate = 1e-4,
         max_grad_norm = 1.0,
         warmup_steps = 32,
         bf16 = True,
-        num_train_epochs = .5, 
+        num_train_epochs = 1, 
         logging_steps = 1,
         save_steps = 500,
         optim = "adamw_8bit", 
