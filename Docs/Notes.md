@@ -255,7 +255,7 @@ The training pipeline has been optimized for the **Gemma 4 31B** model on the `c
    - Initialized a blank `Response` column to facilitate structured output generation during the distillation process.
 3. **Storage Strategy**: Exported the processed dataset to **`cuda_to_rocm_distill.parquet`** for high-performance loading and compatibility with the Unsloth/Hugging Face ecosystem.
 
-### 📊 Project Status Overview (Current)
+### 📊 Project Status Overview (Current) · @Ayush
 *   **Accomplished**:
     *   **Environment**: Full automation of MI300X/ROCm 7.2 droplets via `setup_venv.sh`.
     *   **Data**: 1B+ character corpus cleaned; 11.7k diverse subset selected and verified.
