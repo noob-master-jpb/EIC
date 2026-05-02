@@ -6,14 +6,30 @@ import torch.nn as nn
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
-DEFAULT_MODEL_ID = "Qwen/Qwen3-0.6B"
+DEFAULT_MODEL_ID = "google/gemma-4-E2B-it"
 OUTPUT_DIR = None
-LOAD_DTYPE = "float16"
+LOAD_DTYPE = "bfloat16"
 QUANTIZE_LM_HEAD = False
 RUN_SMOKE_TEST = True
 PREFER_CUDA = True
-SMOKE_TEST_PROMPT = "hello \n"
-SMOKE_TEST_MAX_NEW_TOKENS = 12
+SMOKE_TEST_PROMPT = "Write one sentence about GPU kernel optimization.\n"
+SMOKE_TEST_MAX_NEW_TOKENS = 64
+
+
+def env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def env_int(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    return int(value) if value is not None else default
+
+
+def configure_runtime() -> None:
+    torch.set_float32_matmul_precision("high")
 
 
 def local_model_ready(path: Path) -> bool:
@@ -74,13 +90,20 @@ def ternary_quantize(weight: torch.Tensor, eps: float = 1e-8) -> tuple[torch.Ten
 def should_quantize(module_name: str, module: nn.Module, quantize_lm_head: bool) -> bool:
     if not isinstance(module, nn.Linear):
         return False
-    if module_name.endswith("lm_head") and not quantize_lm_head:
+    protected = ["lm_head", "q_proj", "k_proj", "v_proj", "o_proj"]
+    if module_name.endswith("lm_head"):
+        return quantize_lm_head
+    if module_name.endswith(tuple(protected)):
         return False
     return True
 
 
 @torch.no_grad()
 def convert_model_to_ternary(model: nn.Module, quantize_lm_head: bool) -> dict[str, float]:
+    print(
+        "WARNING: Performing pure static PTQ to 1.58-bit without QAT recovery. "
+        "Model logic will likely be severely degraded. Use qat.py for functional use cases."
+    )
     quantized_layers = 0
     skipped_layers = 0
     total_params = 0
@@ -121,9 +144,19 @@ def resolve_load_source(repo_dir: Path, model_id: str) -> tuple[str, Path, bool]
 
 
 def get_runtime_device() -> torch.device:
-    if PREFER_CUDA and torch.cuda.is_available():
+    if env_bool("PREFER_CUDA", PREFER_CUDA) and torch.cuda.is_available():
         return torch.device("cuda")
     return torch.device("cpu")
+
+
+def resolve_dtype(device: torch.device) -> torch.dtype:
+    dtype_name = os.environ.get("LOAD_DTYPE", LOAD_DTYPE)
+    dtype = getattr(torch, dtype_name)
+    if device.type == "cuda" and dtype is torch.bfloat16 and not torch.cuda.is_bf16_supported():
+        return torch.float16
+    if device.type == "cpu" and dtype in {torch.float16, torch.bfloat16}:
+        return torch.float32
+    return dtype
 
 
 def load_model_and_tokenizer(model_id: str, dtype: torch.dtype) -> tuple[nn.Module, AutoTokenizer, Path]:
@@ -174,7 +207,7 @@ def smoke_test(output_dir: Path, prompt: str, max_new_tokens: int) -> str:
         tokenizer.pad_token = tokenizer.eos_token
 
     device = get_runtime_device()
-    model_dtype = getattr(torch, LOAD_DTYPE) if device.type == "cuda" else torch.float32
+    model_dtype = resolve_dtype(device)
     model = AutoModelForCausalLM.from_pretrained(
         output_dir,
         dtype=model_dtype,
@@ -183,7 +216,15 @@ def smoke_test(output_dir: Path, prompt: str, max_new_tokens: int) -> str:
     model.to(device)
     model.eval()
 
+    if getattr(tokenizer, "chat_template", None):
+        prompt = tokenizer.apply_chat_template(
+            [{"role": "user", "content": prompt}],
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+
     inputs = tokenizer(prompt, return_tensors="pt")
+    input_len = inputs["input_ids"].shape[-1]
     inputs = {key: value.to(device) for key, value in inputs.items()}
     generated = model.generate(
         **inputs,
@@ -191,21 +232,27 @@ def smoke_test(output_dir: Path, prompt: str, max_new_tokens: int) -> str:
         do_sample=False,
         pad_token_id=tokenizer.pad_token_id,
     )
-    return tokenizer.decode(generated[0], skip_special_tokens=True)
+    return tokenizer.decode(generated[0][input_len:], skip_special_tokens=True)
 
 
 def main() -> None:
-    dtype = getattr(torch, LOAD_DTYPE)
+    configure_runtime()
+    device = get_runtime_device()
+    dtype = resolve_dtype(device)
+    print(f"Runtime device: {device}; load dtype: {dtype}")
 
     model, tokenizer, local_model_dir = load_model_and_tokenizer(DEFAULT_MODEL_ID, dtype)
 
     output_dir = (
-        Path(OUTPUT_DIR)
-        if OUTPUT_DIR
+        Path(os.environ.get("OUTPUT_DIR") or OUTPUT_DIR)
+        if os.environ.get("OUTPUT_DIR") or OUTPUT_DIR
         else local_model_dir.parent / f"{local_model_dir.name}-ternary-1bit-codex"
     )
 
-    stats = convert_model_to_ternary(model, quantize_lm_head=QUANTIZE_LM_HEAD)
+    stats = convert_model_to_ternary(
+        model,
+        quantize_lm_head=env_bool("QUANTIZE_LM_HEAD", QUANTIZE_LM_HEAD),
+    )
     print(
         "Converted linear layers to ternary weights: "
         f"{stats['quantized_layers']} layers, "
@@ -218,8 +265,12 @@ def main() -> None:
     save_converted_model(model, tokenizer, output_dir)
     print(f"Saved ternary model to: {output_dir}")
 
-    if RUN_SMOKE_TEST:
-        text = smoke_test(output_dir, SMOKE_TEST_PROMPT, SMOKE_TEST_MAX_NEW_TOKENS)
+    if env_bool("RUN_SMOKE_TEST", RUN_SMOKE_TEST):
+        text = smoke_test(
+            output_dir,
+            os.environ.get("SMOKE_TEST_PROMPT", SMOKE_TEST_PROMPT),
+            env_int("SMOKE_TEST_MAX_NEW_TOKENS", SMOKE_TEST_MAX_NEW_TOKENS),
+        )
         print("Smoke test output:")
         print(text)
 

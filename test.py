@@ -5,16 +5,14 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 REPO_DIR = Path(__file__).resolve().parent
-MODEL_DIR = REPO_DIR / "models" / "Qwen3-0.6B-ternary-1bit-codex"
+MODEL_DIR = REPO_DIR / "models" / "gemma-4-E2B-it-ternary-qat"
 LOAD_DTYPE = torch.float16
 PREFER_CUDA = True
 MAX_NEW_TOKENS = 48
 DO_SAMPLE = False
 
 SMOKE_PROMPTS = [
-    "Explain what a ternary 1-bit language model is in one short paragraph.",
-    "Write a CUDA kernel optimization tip in two sentences.",
-    "Give three short bullets about quantization-aware training.",
+"hello",
 ]
 
 

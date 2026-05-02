@@ -277,3 +277,32 @@ The model ran successfully on my local GPU, but some changes may be needed in th
  * Model: `google/gemma-4-E2B-it`
  * `Math.md` and `README.md` contains proper instructions.
 
+## 2 May 2026, 10:40 AM · @Ankan
+
+### Quantization Breakthrough: Block-wise PTQ+QAT vs Full Quantization `[Status: Done]`
+
+**GLM-5 Distillation** — Phase 1 completed successfully.
+
+**Gemma 4 2B Quantization Results** — 1.58-bit block-wise quantization shows superior performance.
+
+#### Key Findings
+
+1. **Output Quality**: Block-wise method produces proper English words; full quantization yielded random characters in mixed languages.
+2. **Dataset Size Impact**: Small dataset (1–2k datapoints from random chat sources, not yet pushed).
+3. **Scalability Potential**: 31B model may benefit from a hybrid approach: **BiLLM + 1.58-bit + block-wise quantization**.
+4. **Attention Layer Remapping**: May be required for optimal performance.
+
+#### Loss Metrics Comparison
+
+| Method | Start Loss | End Loss | Epochs | Dataset Size | Notes |
+| :--- | :---: | :---: | :---: | :---: | :--- |
+| **Full Quantization** | 500–400 | 100–90 | 0–0.05 | Full | All layers converted immediately |
+| **Block-wise** | 20–40 | 11 | 1 full | 128–256 samples | 90% frozen initially → full conversion at end |
+
+#### Methodology
+
+- **Freezing Strategy**: 90% of model frozen initially; progressively unfrozen during training.
+- **Loss Calculation**: Based on base model output + dataset output, scaled by distillation alpha.
+
+---
+
