@@ -15,7 +15,7 @@ model, tokenizer = FastLanguageModel.from_pretrained(
     model_name = MODEL_ID,
     max_seq_length = 2048,
     load_in_4bit = False, 
-    use_gradient_checkpointing = False,
+    use_gradient_checkpointing = "unsloth",
 )
 
 model = FastLanguageModel.get_peft_model(
@@ -47,8 +47,8 @@ dataset = combine_dataset(
 )
 
 if os.path.exists("./processed_train"):
-    train_dataset = load_from_disk("./processed_train")
-    eval_dataset = load_from_disk("./processed_eval")
+    train_dataset = load_from_disk("./processed_train",keep_in_memory=True)
+    eval_dataset = load_from_disk("./processed_eval",keep_in_memory=True)
 else:
     train, val = split_dataset(dataset, split=0.99, random_seed=3407)
     train_dataset = process_dataset(
@@ -82,8 +82,8 @@ trainer = SFTTrainer(
         output_dir = OUTPUT_DIR,
         dataset_num_proc = 4,
         eval_strategy = "steps",
-        eval_steps = 5,
-        per_device_train_batch_size = 40, 
+        eval_steps = 25,
+        per_device_train_batch_size = 64, 
         gradient_accumulation_steps = 4,
         learning_rate = 1e-4,
         max_grad_norm = 1.0,
@@ -97,6 +97,7 @@ trainer = SFTTrainer(
         seed = 3407,
         dataloader_num_workers = 16, 
         dataloader_pin_memory = True,
+        dataloader_prefetch_factor = 4,
         # torch_compile = True,
         # torch_compile_backend = "inductor",
         # torch_compile_mode = "default",
