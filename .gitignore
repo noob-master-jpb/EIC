@@ -3,8 +3,6 @@
 models/
 gemma*/
 __pycache__
-Datasets/*.txt
-Datasets/combined_output.parquet
 unsloth*
 venv
 .env
