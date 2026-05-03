@@ -1,3 +1,9 @@
+import os
+import gc
+
+# Must be set before torch initializes the CUDA allocator
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 import torch
 import torch.nn as nn
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -15,8 +21,9 @@ KEEP_RATIO = {
 }
 RESIDUAL_STEPS             = 1
 EPSILON                    = 1e-8
-SEQ_LEN                    = 128
-N_CALIBRATION_SAMPLES      = 128
+SEQ_LEN                    = 512    # Reduced: 128 samples × 512 tokens is ample for Hessian diagonal
+N_CALIBRATION_SAMPLES      = 128    # 128 samples converges well for Hessian stats
+CALIBRATION_BATCH_SIZE     = 1      # One sample at a time — peak VRAM = activations for ONE sequence
 MODEL_NAME                 = "Qwen/Qwen3.5-0.8B"
 OUTPUT_DIR                 = "qwen3.5-0.8B-billm"
 
@@ -26,8 +33,42 @@ USE_DYNAMIC_KEEP_RATIO     = False
 USE_CLIP_SEARCH            = False
 USE_BLOCK_NORMALIZATION    = False
 
+FORCE_CPU                  = False
+CPU_THREADS                = 40     # match your logical core count
+
 torch.manual_seed(42)
 random.seed(42)
+
+
+# =========================
+# DEVICE DETECTION  (CUDA/ROCm-safe)
+# =========================
+
+def get_device():
+    """
+    Detects the best available accelerator.
+    - PyTorch ROCm builds expose MI300X via torch.cuda (HIP aliases).
+    - Prints the ROCm/HIP version when available so you can confirm the build.
+    """
+    if FORCE_CPU:
+        return torch.device("cpu")
+
+    if torch.cuda.is_available():
+        dev = torch.device("cuda")
+        name = torch.cuda.get_device_name(0)
+        props = torch.cuda.get_device_properties(0)
+        total_gb  = props.total_memory / 1024**3
+        free_gb   = (props.total_memory - torch.cuda.memory_allocated(0)) / 1024**3
+        alloc_gb  = torch.cuda.memory_allocated(0) / 1024**3
+        hip_ver = getattr(torch.version, "hip", None)
+        runtime  = f"ROCm {hip_ver}" if hip_ver else f"CUDA {torch.version.cuda}"
+        print(f"[Device] {runtime} — {name}")
+        print(f"[VRAM]   total={total_gb:.1f} GB | already allocated={alloc_gb:.1f} GB | free={free_gb:.1f} GB")
+        if alloc_gb > 1.0:
+            print("[WARN]   >1 GB already allocated at startup — another process may be holding GPU memory.")
+        return dev
+
+    return torch.device("cpu")
 
 
 # =========================
@@ -119,38 +160,71 @@ def get_data(tokenizer):
 
 @torch.no_grad()
 def collect_hessian(model, samples, device):
+    """
+    Single-sample Hessian collection.
+
+    Memory strategy:
+    - Model is already on CPU (loaded that way in download_and_load_model).
+    - We move the model to GPU, run ONE sample at a time (CALIBRATION_BATCH_SIZE=1),
+      then move it back to CPU.  Peak VRAM = model weights + activations for
+      exactly one sequence — the absolute minimum possible.
+    """
     hess = {}
     hooks = []
 
     def hook(name):
         def fn(module, inp, out):
-            x = inp[0]
+            x = inp[0].detach()
             if x.dim() == 3:
-                x = x.view(-1, x.shape[-1])
-
-            # .clone() escapes inference-mode so we get a normal tensor
-            h = torch.mean(x**2, dim=0).cpu().clone() + EPSILON
+                x = x.reshape(-1, x.shape[-1])  # (B*T, D) — B=1 here
+            h = torch.mean(x.float() ** 2, dim=0).cpu() + EPSILON
+            del x  # release GPU tensor immediately
             if name not in hess:
                 hess[name] = h
             else:
-                hess[name] = hess[name] + h   # out-of-place: avoids inference-tensor inplace error
+                hess[name].add_(h)
         return fn
 
     for name, m in model.named_modules():
         if isinstance(m, nn.Linear):
             hooks.append(m.register_forward_hook(hook(name)))
 
-    for s in tqdm(samples):
+    if device.type == "cuda":
+        print("[Calibration] Moving model to GPU...")
+        model.to(device)
+        torch.cuda.synchronize()
+        alloc = torch.cuda.memory_allocated() / 1024**3
+        print(f"[Calibration] Model on GPU — {alloc:.2f} GB allocated")
+
+    for i, sample in enumerate(tqdm(samples, desc="Calibrating")):
+        # sample shape: (1, SEQ_LEN)  — send one sequence at a time
+        inp = sample.to(device)
         with torch.inference_mode():
-            model(s.to(device))
-        del s
-        torch.cuda.empty_cache()
+            model(inp, use_cache=False)
+        del inp
+
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+        if i % 16 == 0:
+            gc.collect()
 
     for h in hooks:
         h.remove()
 
+    # Normalise — use out-of-place division to escape the inference-mode flag
+    # that was baked into these tensors when the hooks ran inside inference_mode().
+    n = len(samples)
     for k in hess:
-        hess[k] = hess[k] / len(samples)   # out-of-place: tensors may be inference-mode tagged
+        hess[k] = hess[k] / n
+
+    # Move model back to CPU; GPU is fully free for evaluation later
+    if device.type == "cuda":
+        print("[Calibration] Moving model back to CPU...")
+        model.to("cpu")
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+    gc.collect()
 
     return hess
 
@@ -171,7 +245,6 @@ def quantize(model, hessians):
 
     modules = dict(model.named_modules())
 
-    # optional sensitivity scheduling
     if USE_SENSITIVITY_SCHEDULING:
         sensitivities = {}
         for name, m in modules.items():
@@ -186,7 +259,7 @@ def quantize(model, hessians):
 
     accumulated_error = 0.0
 
-    for name in tqdm(layer_order):
+    for name in tqdm(layer_order, desc="Quantizing layers"):
         if name not in hessians:
             continue
 
@@ -208,7 +281,6 @@ def quantize(model, hessians):
         b = billm_binarize(w, mask)
         b = apply_residual(w, b, mask)
 
-        # optional normalization
         if USE_BLOCK_NORMALIZATION:
             ratio = w.norm() / (b.norm() + EPSILON)
             ratio = torch.clamp(ratio, 0.85, 1.2)
@@ -223,7 +295,7 @@ def quantize(model, hessians):
 
 
 # =========================
-# PERPLEXITY (CORRECT)
+# PERPLEXITY
 # =========================
 
 @torch.no_grad()
@@ -242,7 +314,7 @@ def perplexity(model, tokenizer, device):
         begin = max(i + stride - max_len, 0)
         end = i + stride
 
-        input_ids = enc[:, begin:end]
+        input_ids = enc[:, begin:end].to(device)
         target_ids = input_ids.clone()
         target_ids[:, :-stride] = -100
 
@@ -253,10 +325,9 @@ def perplexity(model, tokenizer, device):
 
 
 # =========================
-# MAIN
+# MODEL LOADING
 # =========================
 
-import os
 from huggingface_hub import snapshot_download
 
 def download_and_load_model(model_name, local_dir="models"):
@@ -273,15 +344,30 @@ def download_and_load_model(model_name, local_dir="models"):
         print(f"Model found in '{model_path}', loading from local directory...")
 
     tokenizer = AutoTokenizer.from_pretrained(model_path)
+    # Always load to CPU first.
+    # We move to GPU only during calibration forward passes and final eval,
+    # so VRAM is never occupied by idle model weights.
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
-        torch_dtype=torch.float16,
-        device_map="auto"
+        torch_dtype=torch.bfloat16,
+        device_map="cpu",
     )
     return tokenizer, model
 
+
+# =========================
+# MAIN
+# =========================
+
 def main():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device()
+
+    if device.type == "cpu":
+        torch.set_num_threads(CPU_THREADS)
+        print(f"[CPU] Using {CPU_THREADS} threads.")
+    else:
+        total_vram = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+        print(f"[GPU] Total VRAM: {total_vram:.1f} GB")
 
     tokenizer, model = download_and_load_model(MODEL_NAME, "models")
     model.config.use_cache = False
@@ -289,11 +375,15 @@ def main():
     samples = get_data(tokenizer)
     hess = collect_hessian(model, samples, device)
 
-    print("Moving model to CPU for quantization...")
-    model = model.to("cpu")
-    torch.cuda.empty_cache()
+    # collect_hessian already moved the model to CPU.
+    # Quantization is weight-only (no activations) — CPU is fine.
+    print("Quantizing on CPU (weight-only, no activations needed)...")
+    gc.collect()
 
     quantize(model, hess)
+
+    print(f"Moving model to {device} for evaluation...")
+    model = model.to(device)
 
     ppl = perplexity(model, tokenizer, device)
     print("Perplexity:", ppl)
