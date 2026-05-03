@@ -1,0 +1,2094 @@
+BiLLM: Pushing the Limit of Post-Training Quantization for LLMs
+Wei Huang 1 Yangdong Liu 2 Haotong QinB 3 Ying Li 2 Shiming Zhang 1
+Xianglong Liu 2 Michele Magno 3 Xiaojuan Qi 1
+Abstract
+Pretrained large language models (LLMs) exhibit
+exceptional general language processing capabili-
+ties but come with significant demands on mem-
+ory and computational resources. As a power-
+ful compression technology, binarization can ex-
+tremely reduce model weights to a mere 1 bit,
+lowering the expensive computation and mem-
+ory requirements. However, existing quantiza-
+tion techniques fall short of maintaining LLM
+performance under ultra-low bit-widths. In re-
+sponse to this challenge, we present BiLLM, a
+groundbreaking 1-bit post-training quantization
+scheme tailored for pretrained LLMs. Based on
+the weight distribution of LLMs, BiLLM first
+identifies and structurally selects salient weights,
+and minimizes the compression loss through an
+effective binary residual approximation strategy.
+Moreover, considering the bell-shaped distribu-
+tion of the non-salient weights, we propose an op-
+timal splitting search to group and binarize them
+accurately. BiLLM, for the first time, achieves
+high-accuracy inference (e.g. 8.41 perplexity on
+LLaMA2-70B) with only 1.08-bit weights across
+various LLM families and evaluation metrics, out-
+performs SOTA quantization methods of LLM by
+significant margins. Moreover, BiLLM enables
+the binarization process of a 7-billion LLM within
+0.5 hours on a single GPU, demonstrating satis-
+factory time efficiency. Our code is available at
+https://github.com/Aaronhuang-778/BiLLM.
+1. Introduction
+Recently, large language models (LLMs) based on trans-
+formers (Vaswani et al., 2017) have garnered significant
+attention in natural language processing. Pre-trained LLMs
+1The University of Hong Kong
+2Beihang University
+3ETH Z¨urich.
+Correspondence to:
+Haotong Qin <qinhao-
+tong@buaa.edu.cn>.
+Proceedings of the 41 st International Conference on Machine
+Learning, Vienna, Austria. PMLR 235, 2024. Copyright 2024 by
+the author(s).
+5.68
+5.68
+6.28
+25.53
+106767.33
+168388
+5.68
+5.68
+6.19
+11.1
+152.31
+267001.71
+1
+10
+100
+1000
+10000
+100000
+1000000
+16
+8
+4
+3
+2
+1
+RTN
+GPTQ
+PB-LLM (INT 8, 10%)
+BiLLM (Ours)
+15.14 (Ours)
+838.13
+Quantization Bit-width
+Perplexity in 퐥ȑȉퟏǟ scale
+LLaMA-13B 
+Figure 1: Perplexity of LLaMA-13B on WikiText2 under
+different bit-widths. Round-to-nearest (RTN), GPTQ, and
+PB-LLM (10% weight of INT8) suffer accuracy loss at ultra-
+low bits, facing the sharply increasing perplexity (↓). BiLLM
+demonstrates exceptional performance under binarization.
+such as OPT (Zhang et al., 2022) and LLaMA (Touvron
+et al., 2023a), have demonstrated excellent performance
+across a range of evaluation benchmarks. However, LLMs
+pose substantial challenges in deployment on memory-
+constrained devices due to their immense parameter size
+and computation requirements. For instance, the widely-
+used LLaMA2-70B (Touvron et al., 2023b) model, with its
+70 billion parameters, requires 150 GB of storage in half-
+precision (FP16) format. This necessitates at least two A100
+GPUs, each with 80 GB of storage space, for inference.
+Model quantization has emerged as a highly effective tech-
+nology for compressing neural networks, thereby reducing
+the model size of LLMs and substantially saving GPU mem-
+ory consumption (Dettmers et al., 2022). Current quan-
+tization techniques primarily fall into Quantization-Aware
+Training (QAT) and Post-Training Quantization (PTQ). QAT
+involves fine-tuning and retraining during the quantization
+process, while PTQ significantly streamlines the compu-
+tation by eliminating back-propagation, enabling a faster
+quantization process and promoting the practicality of quan-
+tization (Frantar et al., 2022; Shang et al., 2023; Lin et al.,
+2023). Given the deep structures and numerous parameters
+of LLMs, PTQ stands out for its ability to rapidly perform
+1
+arXiv:2402.04291v2  [cs.LG]  15 May 2024
+
+BiLLM: Pushing the Limit of Post-Training Quantization for LLMs
+the quantization process, especially on time and resource-
+constrained scenarios (Zhu et al., 2023).
+Despite the success of previous PTQ methods in 8-bit and
+4-bit quantization (Dettmers et al., 2022; 2023b; Frantar
+et al., 2022; Xiao et al., 2023; Frantar & Alistarh, 2022), the
+expanding size of LLMs demands more aggressive quan-
+tization approaches (Shang et al., 2023). Neural network
+binarization, which reduces the weight bit-width to only 1
+bit, is a promising approach (Helwegen et al., 2019; Qin
+et al., 2020; 2023). However, as depicted in Figure 1, current
+advanced PTQ methods for LLMs exhibit a performance
+collapse under ultra-low bit (⩽3 bits) quantization. This
+phenomenon can be attributed to the significant difference
+between quantized and original weights. Even the recent bi-
+nary PTQ method for LLMs, PB-LLM (Shang et al., 2023),
+only maintains a perplexity metric of around 800 with an
+average weight of 1.7 bits. This observation underscores
+the challenges existing PTQ methods face in promoting the
+weight binarization of LLMs.
+In pursuit of this goal, we conducted an empirical study to
+analyze the distribution of pre-trained weights in LLMs. The
+findings derived from this study are presented in Appendix
+G, revealing two key observations:
+• The second-order Hessian matrix of weights demon-
+strates an exceptionally long-tail distribution and is
+often used to measure the importance of weight ele-
+ments in neural networks (LeCun et al., 1989; Dong
+et al., 2019). As depicted in Figure 2, a small fraction
+of weights elements possesses significantly high Hes-
+sian values, substantially influencing the layer output.
+In contrast, most Hessian values cluster around 0.
+• The density distribution of weight magnitudes in LLMs
+follows a bell-shaped pattern. This bell-shaped dis-
+tribution exhibits a significant resemblance to both the
+Gaussian or Laplace distribution in terms of its char-
+acteristics (Blundell et al., 2015). Figure 2 illustrates
+that most weight values cluster around zero with a
+non-uniform bell-shaped distribution.
+The above implies: a) A minority of weights play an impor-
+tant role in LLMs, whereas the majority of weights exhibit
+characteristics of redundancy (Shang et al., 2023; Dettmers
+et al., 2023b); b) With the most aggressive bit-width, bina-
+rization incurs most severe error among quantization under
+bell-shaped distributions in LLMs (Jacob et al., 2018).
+Motivated by the above observation, we propose a novel
+1-bit PTQ framework for LLMs, namely BiLLM, incorpo-
+rating two core designs to achieve highly accurate weight
+binarization. First, guided by the Hessian-based metric, we
+select the salient weights structurally (Figure 3 upper-right)
+to achieve a trade-off between accuracy and storage sav-
+Density Distribution of Weight
+ǿȋ
+ǿȋ+ȍ
+...
+long-tail distribution
+frequency
+Hessian
+0
+0
+Sensitivity
+Value
+Magnitude
+bell-shaped distribution
+Figure 2: The Hessian metrics (sensitivity) and magnitude
+(value) of weights in LLMs. The weights of different lay-
+ers in LLMs are characterized by bell-shaped distribution,
+accompanied by a few salient values.
+ings and develop a residual approximation to maximize the
+restoration of salient weights with highly dynamic range.
+Second, for the remaining non-salient weights (Figure 3
+lower-right), we design an optimal splitting binarization
+strategy, where a meticulous search process is applied to de-
+termine an optimal break-point for weight distribution and
+binarization of the segments is then processed separately to
+minimize binarization errors. Moreover, BiLLM incorpo-
+rates error compensation on a block-wise basis by default
+following existing common practices (Frantar et al., 2022;
+Shang et al., 2023), which further reduces quantization error.
+Extensive experiments demonstrate that BiLLM achieve the
+state-of-the-art (SOTA) performance for LLMs across mul-
+tiple LLM families on various evaluation metrics, and first
+achieves extremely compact 1.07∼1.11 bit-width in aver-
+age for the PTQ binarization. For example, on the Wiki-
+text2(Merity et al., 2016) metric, BiLLM achieved perplexi-
+ties of 8.49 and 8.41 with only 1.08-bit weights on LLaMA-
+65B (Touvron et al., 2023a)and LLaMA2-70B (Touvron
+et al., 2023b), respectively, even surpassing the 9.34 perfor-
+mance of the FP16 OPT-66B (Zhang et al., 2022).
+2. Related Works
+2.1. Large Language Model Quantization
+Quantization maps high-precision parameters to a discrete
+range. This method, which compresses parameters without
+altering the model structure, effectively reduces the storage
+and computational overhead of deep neural networks. Re-
+cent work has successfully applied QAT and PTQ to LLMs.
+QAT, through a quantization-aware retraining strategy, bet-
+ter preserves the performance of quantized models. LLM-
+QAT (Liu et al., 2023) addressed data barrier issues in QAT
+training through data-free distillation. However, for LLMs
+with extremely large parameter sizes, the cost of retraining
+is prohibitively high and inefficient. Therefore, techniques
+such as QLoRA (Dettmers et al., 2023a) focus on parameter-
+efficient fine-tuning (PEFT) methods for quantizing LLMs,
+enhancing the efficiency of QAT. Nevertheless, even these
+2
+
+BiLLM: Pushing the Limit of Post-Training Quantization for LLMs
+ Value
+Binarized 
+FC for Q
+Binarized 
+FC for  K
+Binarized 
+FC for V
+MatMul
+MatMul
+Activation
+Activation
+Binarized
+FC1
+Activation
+Binarized
+FC2
+Activation
+Multi-Head
+Self-Attrntion 
+Feed-Fordward Block
+Absolute Value
+BiLLM Framework
+Binarized-FC Projection
+ Binary  Weight
+Hessian Matrix
+Float Weight
+ Value
+Residual
+Binarization
+ϫ∗
+Bell-shaped Splitting for Non-salient Weight
+Splitting
+Binarization
+Binary Residual Approximation for Salient Weight
+ Value
+ Value
+ Value
+ Value
+Figure 3: Schematic of the PTQ binarization framework for LLMs. The left side shows the structure of the Transformer
+block after binarization. The right side shows the binarization process of BiLLM, which consists of two parts, Residual
+Approximation for salient weights and Bell-shaped Splitting for non-salient weights.
+efficient fine-tuning quantization strategies require over 24
+hours of GPU time.
+Therefore, the PTQ strategy has become a significant
+option for quantizing LLMs efficiently.
+Works like
+BRECQ (Li et al., 2021), ZerqQuant (Yao et al.)
+and
+LLM.int8() (Dettmers et al., 2022) enhance quantization
+accuracy by adding additional grouping labels for custom
+quantization blocks. Other studies adopt a feature segmen-
+tation strategy, such as PB-LLM (Shang et al., 2023) and
+SpQR (Dettmers et al., 2023b). They preserve the bit-width
+of outlier features or those with higher quantization errors
+to FP16 or INT8, mitigating the precision loss due to quanti-
+zation. GPTQ (Frantar et al., 2022) employs a more precise
+quantization framework, reducing the block quantization
+errors of LLMs through Hessian-based second-order er-
+ror compensation (Frantar & Alistarh, 2022), achieving
+commendable performance in low-bits (4 bits) quantization.
+Smoothquant (Xiao et al., 2023) introduces a strategy of
+scaling weight and activation outliers to simplify quantiza-
+tion. Subsequently, AWQ (Lin et al., 2023) and OWQ (Lee
+et al., 2023) also proposed scale transformations of more
+crucial weight channels for activation features, preserving
+their information representation capacity.
+2.2. Network Binarization
+Binarized compression can quantize parameters to only 1 bit,
+expressed as ±1. In forward propagation, the sign function
+is used to binarize the original parameter tensor:
+Wb = α · sign(Wf),
+(1)
+sign(x) =
+(
+1
+if x ≥0,
+−1
+others.
+(2)
+where Wf ∈Rn×m is the full precision weight and Wb ∈
+Rn×m is the binarized output. n and m represent the size of
+the weight matrix. α denotes the scaling factor (Courbariaux
+et al., 2016). Binarization usually uses the channel-wise
+scale (Rastegari et al., 2016; Qin et al., 2023), so α ∈Rn.
+Most previous binarization works adopt a framework based
+on QAT for quantization (Qin et al., 2023). Straight through
+estimator (STE) (Bengio et al., 2013) is deployed to ad-
+dress the issue of gradient vanishing caused by the sign(·)
+function. Binary Weight Network (BWN) (Rastegari et al.,
+2016) was initially proposed for executing neural network
+computations by binarizing weights and using full-precision
+activations, while XNOR-Net (Rastegari et al., 2016) ex-
+tends this approach by binarizing both weights and activa-
+tions. Both methods minimize quantization errors through
+dynamic searching of α. DoReFa-Net (Zhou et al., 2016)
+further expands upon XNOR-Net, employing quantized gra-
+dients to accelerate network training. Group segmentation
+is also applied in binarization tasks, with Syq (Faraone et al.,
+2018) utilizing network weight to the small size of groups
+for minimizing binarization errors.
+Based on the successful application of binarization in Trans-
+formers (Wang et al., 2023) and Bert (Qin et al., 2022), we
+believe that the binarization of LLMs is filled with poten-
+tial. PB-LLM (Shang et al., 2023) investigates the impact
+of binarized QAT and PTQ strategies on LLMs, but it is
+necessary to retain a significant proportion (over 30%) of
+the weights at 8 bits to enable LLMs to produce reasonable
+answers. Due to the presence of a large amount of INT8,
+LLMs still have a relatively high average bit-width. To ad-
+dress this issue, we proposed BiLLM, which aims to push
+the limit of PTQ binarization for LLMs.
+3. Method
+To achieve accurate binarization of LLMs, our approach is
+designing distinct binarization strategies for salient and non-
+3
+
+BiLLM: Pushing the Limit of Post-Training Quantization for LLMs
+salient weights. We first introduce the selection rules for
+salient weights and their binarization strategies in Section
+3.1. Then, we elaborate on the distribution-based binariza-
+tion strategy for non-salient weights in Section 3.2.
+3.1. Salient Weight Binarization for LLMs
+In deep neural networks, not all parameters carry equal sig-
+nificance. Utilizing solely the magnitude of the weights
+can not fully capture the impact of each element on the
+model’s performance. The Hessian metric serves as a com-
+mon benchmark for detecting parameter sensitivity (Dong
+et al., 2019; Dettmers et al., 2023b; 2022). We thus leverage
+the Hessian matrix to assess the salience of parameters in
+each under-binarized layer. We implement an optimized
+computation process to derive weight sensitivity, which
+allows us to obtain the importance metric of parameters
+without compromising efficiency:
+si =
+w2
+i
+[H−1]2
+ii
+,
+(3)
+where H represents the Hessian matrix of each layer, and
+wi represents the original value of each element. In the
+following section, si serves as a criterion for assessing the
+significance of weight elements and is used as a feature
+indicator for structured selection.
+Structural Searching Selection. Utilizing an unstructured
+selection enables the coverage of all salient elements. How-
+ever, it requires the implementation of an additional 1-bit
+bitmap index (Chan & Ioannidis, 1998), leading to increased
+average bit-width. This balance is inefficient, especially for
+Hessian outlier weights that constitute a mere 1-5% of the
+total (Yao et al., 2023). In our analysis of sensitivity distri-
+bution within LLMs, we discovered that the majority of the
+weights’ sensitive Hessian values are predominantly con-
+centrated in specific columns or rows (Appendix G). This
+pattern is attributed to the convergence effects inherent in
+the multi-head self-attention mechanism of these models
+and further motivates us to implement a structured approach
+for selecting salient weights, for reducing the additional
+bitmap. Given that BiLLM employs a per-channel (or per-
+row) type of binarization, we determine salience through a
+per-column segmentation on the whole weight matrix.
+We organize the column salience in descending order and
+introduce an optimized search algorithm aimed at minimiz-
+ing quantization error, which in turn determines the number
+of columns within the salient group. To elaborate on this
+methodology, we initially define the objective of binariza-
+tion quantization, grounded on Equation (1):
+arg min
+α,B
+||W −αB||2,
+(4)
+where B ∈{−1, +1}n×k, k is the number of selected
+columns. The problem (Rastegari et al., 2016) of optimal
+͖Ή
+͖퐬퐚퐥Ͷͳͺ猀
+Resdual 
+original 
+binarization
+residual 
+binarization 
+H
+ͫ퐬퐚퐥Ͷͳͺ猀
+ͫ
+-
+͖Έ
+Figure 4: Illustration of salient weight binarization. The B1
+binarized from salient weight is made into a residual with
+the original value and then binarized again to obtain B2.
+α and B can simply be solved as α = ||W||ℓ1
+n×k
+and B =
+sign(W). Then, the optimization function for selecting
+salient columns is defined as:
+arg min
+Wuns
+||W−(αsal sign(Wsal)∪αuns sign(Wuns))||2, (5)
+where Wsal denotes the column-wise combination of orig-
+inal weight and Wuns is the left non-salient part. We can
+easily get that W = Wsal ∪Wuns, so the only variable
+parameter is the number of rows in Wsal.
+Binary Residual Approximation. Salient weights are lim-
+ited in quantity, yet exhibit significant variance when ag-
+gregated. Direct preservation of these weights in INT8 or
+FP16 formats leads to an increase in the average weight bits,
+undermining the compressive benefits of binarization. Tra-
+ditional binarization methods for salient weights, however,
+result in substantial quantization errors. To that end, we
+develop a residual approximation approach for binarizing
+salient weights. Contrary to the comprehensive high-order
+quantization (Li et al., 2017) applied to the entire weight
+matrix, our technique minimizes binarization error through
+a second-order approximation of merely a select subset of
+salient weights. This method guarantees the precision of
+salient weights while simultaneously decreasing bit-width
+overhead. As illustrated in Figure 4, this approach incor-
+porates a recursive computation strategy for weight bina-
+rization compensation, applying a subsequent binarization
+process to the residuals remaining after the initial binary pro-
+cess. Building upon Equation (4), we propose a redesigned
+residual approximation optimization specifically for salient
+weights, which is defined as follows:
+
+
+
+α∗
+o, B∗
+o = arg min
+αo,Bo
+||W −αoBo||2),
+α∗
+r, B∗
+r = arg min
+αr,Br
+||(W −α∗
+oB∗
+o) −αrBr||2),
+(6)
+where Bo represents the original binary tensor, while Br
+denotes the residual binarized matrix with the same size as
+Bo. We efficiently solve for the two binarized optimization
+objectives using the same solution method as in Equation (4).
+4
+
+BiLLM: Pushing the Limit of Post-Training Quantization for LLMs
+Non-salient Weight Distribution
+Optimal Breakpoint Search
+Sparse Area
+Sparse Area
+Sensitivity Matrix
+ Salient Weight
+Non-salient 
+Weight
+Concentrated Area
+θ∗
+Figure 5: Distribution and splitting schematic of the 4th
+projection layer in LLaMA2-7B. The top 5% of the Hessian
+elements are orange, and the optimal break-point divides
+the non-salient weights into sparse and concentrated areas.
+Ultimately, we arrive at the following approximation:
+W ≈α∗
+oB∗
+o + α∗
+rB∗
+r.
+(7)
+It can be easily proven that the residual approach of Equa-
+tion (7) has a lower quantization error than the direct one of
+Equation (4). We define the residual binarization error E:
+Erb = ||W −α∗
+oB∗
+o −α∗
+rB∗
+r||2.
+(8)
+The original binarized quantization error is calculatde as
+||W −α∗
+oB∗
+o||2 by Equation (4), and from the second
+sub-equation of Equation (6) we can get that loss Erb ≤
+||W −α∗
+oB∗
+o||2. Therefore, through the method of resid-
+ual approximation, we are able to further reduce the binary
+quantization error of salient weights with ultra-low bit-width
+storage compared to retaining salient weights at 8 or 16 bits.
+3.2. Bell-shaped Distribution Splitting for Binarization
+Following the removal of salient weights, the remaining
+weights maintain a bell-shaped distribution, which becomes
+closer to symmetric with the exclusion of salient weights’
+impact, as depicted in Figure 5. Binary quantization, rep-
+resenting an extreme form of uniform quantization, en-
+counters more loss in the presence of non-uniform distribu-
+tions. A practical approach involves the group-wise quan-
+tization (Park et al., 2018; Fang et al., 2020; Jain et al.,
+2019) of weights according to their distribution. Balancing
+between quantization accuracy and compression efficiency,
+we identify a single break-point within the distribution. As
+shown in Figure 5, this partition divides the non-salient bell-
+shaped distribution into two categories: the sparse area and
+the concentrated area.
+The segmentation process identifies a break-point that cat-
+egorizes non-salient weights into two groups: Ac[−p, p]
+for concentrated weights and As[−m, −p] ∪[p, m] for
+sparse weights, where signifies the maximum extent of
+non-salient weights. We then apply binarization to both
+Ac (concentrated) and As (sparse). To determine the opti-
+mal break-point p∗, we assume that the non-salient weights
+possess a symmetrical probability density function (PDF)-
+g(x) over the bounded domain [−m, m], with the properties
+g(x) = g(−x). Then the mean squared quantization error
+of binarization is defined as:
+θ2
+q =
+Z 0
+−m
+(−α −x)2g(x)dx +
+Z m
+0
+(α −x)2g(x)dx. (9)
+Since g(x) is a symmetric function, the above formula is
+simplified to:
+θ2
+q = 2
+Z m
+0
+(α −x)2g(x)dx.
+(10)
+Then, the break-point p divides the non-salient weights into
+two parts. According to the Equation (10), under the discon-
+tinuous weight distribution, we get a new binary quantiza-
+tion error:
+θ2
+q,p = ||Ws −αsBs||2 + ||Wc −αcBc||2,
+(11)
+where Ws and Wc denote the weights of the sparse and
+concentrated area, respectively. Bs and Bc were calculated
+from Equation (2), αs and αc are the binarization scales,
+determined by Equation (4):
+αs = 1
+ns
+||Ws||ℓ1, αc = 1
+nc
+||Wc||ℓ1,
+(12)
+where n represents the number of weight elements in each
+area. Therefore, the problem function is only related to p,
+and our target to find the optimal p∗can be defined as:
+p∗= arg min
+p
+(θ2
+q,p).
+(13)
+When the remaining weights follow an ideal Gaussian
+distribution, Equation (11) is demonstrated to be a con-
+vex function with a global minimum, as evidenced in
+prior studies (Fang et al., 2020; You, 2010). Nonetheless,
+the actual distribution of non-salient weights, while bell-
+shaped, diverges from the ideal Gaussian model. Simultane-
+ously, we retain the block-wise compensation strategies of
+GPTQ (Frantar et al., 2022) and OBC (Frantar & Alistarh,
+2022) to offset quantization errors, which could change the
+distribution of weights. In response, we employ a percentile
+search method to identify the optimal break-point based
+on the objective function outlined in Equation (13). This
+percentile search strategy is efficient and straightforward,
+completing the binarization process for a 7B LLM within
+merely 30 minutes. Furthermore, our findings indicate that
+despite the deviation of non-salient weights from the ideal
+Gaussian distribution, the error curve associated with the
+search process still exhibits convex properties (as detailed
+in Appendix C), confirming the feasibility of pinpointing
+the optimal break-point.
+5
+
+BiLLM: Pushing the Limit of Post-Training Quantization for LLMs
+1
+1.005
+1.01
+1.015
+1.02
+1.025
+1.03
+1.035
+1.04
+1.045
+1.05
+32
+64
+128
+256
+512
+1024
+Average bit-width
+block size
+storing
+1
+1.1
+1.2
+1.3
+1.4
+1.5
+1.6
+1.7
+1.8
+1.9
+2
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+Average bit-width
+salient ratio
+weights
+Figure 6: Weights and hardware overhead changes on
+Llama-7B. The left shows the calculation parameters as
+a function of the significant weight ratio; the right shows
+the hardware overhead as a function of the block.
+Table 1: Average bit results from structural searching and
+residual binarization of OPT, LLaMA, and LLaMA2.
+Model
+7B
+13B
+30B
+66B/65B/70B*
+OPT
+1.10
+1.12
+1.12
+1.13
+LLaMA
+1.09
+1.09
+1.10
+1.10
+LLaMA2
+1.07
+1.08
+N/A
+1.09
+*: OPT-66B, LLaMA-65B and LLaMA2-70B.
+3.3. Pipeline of BiLLM
+As depicted in Figure 3 left, BiLLM primarily performs
+binary quantization on all Linear weights within the Trans-
+former blocks. This section introduces the detailed pipeline
+of BiLLM.
+Binarization Workflow. We first deploy the structural
+search of salient columns and a residual approximation
+binarization for salient columns. The process of salient
+columns incurs additional weight bits due to the search
+proportion and residual mechanism. Table 1 presents the
+extra bits generated in some LLMs (Zhang et al., 2022; Tou-
+vron et al., 2023a;b). It can be observed that the searching
+and residuals bring only about 0.1 additional weight bits.
+Then, for these non-uniformly distributed weights, we use
+a split binarization strategy searching optimal p∗. The con-
+centrated area and the sparse area are binarized separately.
+This part incurs the cost of an additional 1 bit for hardware
+group identification, but the computing parameters are still
+compressed to 1 bit. By retaining only block-wise com-
+pensation(Frantar et al., 2022; Frantar & Alistarh, 2022)
+and eliminating column-wise quantization error compensa-
+tion, we further enhance the efficiency of PTQ and ensure
+the effectiveness of distribution exploration. Algorithm 1
+illustrates the complete process of BiLLM, and detailed im-
+plementation of BiLLM is shown in Appendix A.
+Extra Storing Bits. The extra bits is acceptable under the bi-
+nary weight quantization of BiLLM. The weight parameters
+and additional hardware overhead are as follows:
+
+
+
+Nparam = 2 × rsalient + 1 × (1 −rsalient),
+Nstoring = 1 +
+1
+bsize
+,
+(14)
+where rsalient signifies the proportion of salient weights and
+bsize denotes the block size in OBC compensation, with 1
+bit allocated for marking the division of non-salient weights.
+1
+bsize represents the identifier for the structured column of
+salient weights. For example, a 10% structural selection
+along with an OBC compensation of size 128 was employed.
+This results in a weight parameter bit-width of 1.1 bits and a
+hardware flag bit-width of 1.008 bits. Figure 6 illustrates the
+weight overhead for different proportions and block sizes.
+It is important to note that flag weights do not participate
+in the computation; actual calculations are executed solely
+with parameter weights. Therefore, additional hardware
+identification bits do not affect the acceleration effect of
+binary quantization.
+Algorithm 1 Main Framework of BiLLM: Inner details of
+each function are shown in Algorithm 2
+func BinaryLLM(W, X, β, λ)
+Input: W ∈Rn×m - weight matrix
+X ∈Rr×d - calibration data
+β - block size
+λ - hessian regularizer
+Output: B - binarized weights
+1: H := 2XX⊤// ℓ2 error hessian matrix
+2: Hc := Cholesky((H + λI)−1)
+3: B := 0n×m
+4: for b = 0, β, 2β, ..., N do
+5:
+Wb := W:,b:b+β
+6:
+rows{·} := salient(W:,b:b+β, Hc)
+7:
+˜B1 := res approximation(Wb
+:,j∈{rows})
+8:
+p∗:= seg search(Wb
+i,j /∈{rows})
+9:
+˜B2 := binary(Wb
+|wi,j|≤p∗,j /∈{rows})
+10:
+˜B3 := binary(Wb
+|wi,j|>p∗,j /∈{rows})
+11:
+B:,b:b+β := ˜B1 + ˜B2 + ˜B3
+12:
+E := (W:,b:b+β −B:,b:b+β)/Hc
+bb:b+βb+β
+13:
+W:,b+β: := W:,b+β:−E·Hc
+b:b+β,b+β: // block-wise
+OBC
+14: end for
+15: return B
+4. Experiments
+4.1. Setup
+We deploy BiLLM within the Pytorch (Paszke et al., 2019)-
+Huggingface libraries (Wolf et al., 2019). All the binariza-
+tion processes and experiments are conducted on a single 80
+6
+
+BiLLM: Pushing the Limit of Post-Training Quantization for LLMs
+Table 2: Perplexity of RTN, GPTQ, PB-LLM, and BiLLM on OPT Family. The columns represent the perplexity results on
+Wikitext2 datasets with different model sizes.
+Method
+Block
+Size
+Weight
+Bits
+1.3B
+2.7B
+6.7B
+13B
+30B
+66B
+Full Precision
+-
+16.00
+14.62
+12.47
+10.86
+10.13
+9.56
+9.34
+RTN
+-
+3.00
+13337.38
+15594.72
+5797.32
+3357.01
+1566.00
+6126.09
+GPTQ
+128
+3.00
+20.97
+16.88
+14.86
+11.61
+10.27
+10.51
+RTN
+-
+2.00
+11272.65
+9505.76
+28363.14
+194086.78
+169616.47
+1165864.25
+GPTQ
+128
+2.00
+115.17
+61.59
+50.19
+21.36
+15.71
+82.10
+RTN
+-
+1.00
+17165.72
+36516.69
+11550.91
+6986.35
+6485.99
+184796.30
+GPTQ
+128
+1.00
+14884.73
+14144.58
+10622.81
+15196.96
+12478.37
+13106.45
+PB-LLM †
+128
+1.70
+265.52
+124.35
+105.16
+81.92
+25.14
+29.09
+BiLLM ‡
+128
+1.11
+69.97
+49.55
+35.36
+18.82
+12.71
+12.06
+-: Vanilla RTN conducts layer-wise quantization. †: PB-LLM selects 10% elements in the original tensor as salient weights based on
+Hessian. ‡: BiLLM uses structural searching for salient weights. The table gives the average bit-width of the OPT family.
+GB NVIDIA A100. Given that BiLLM is an efficient PTQ
+framework, it eliminates the need for any fine-tuning, allow-
+ing for completion through a single quantization process.
+Models and Datasets. We facilitate our method on the
+OPT (Zhang et al., 2022) and LLaMA (Touvron et al.,
+2023a;b) families. Additionally, considering the custom-
+ary need for instruction-based fine-tuning of LLMs to adapt
+to varying contexts, we also conducted experiments on Vi-
+cuna (Chiang et al., 2023). In terms of evaluation metrics,
+we mainly focused on the perplexity of LLMs’ outputs,
+which is widely acknowledged in prior studies as a challeng-
+ing yet stable indicator of LLM capabilities, particularly
+apt for network compression (Yao et al.; Frantar et al.,
+2022; Frantar & Alistarh, 2023; Xiao et al., 2023). We con-
+sider the test of WikiText2 (Merity et al., 2016), PTB (Mar-
+cus et al., 1994), as well as a part of the C4 (Raffel et al.,
+2020) data. Then, we further conduct the experiments on
+seven zero-shot evaluation tasks (PIQA (Bisk et al., 2020),
+BoolQ (Clark et al., 2019), OBQA (Mihaylov et al., 2018),
+Winogrande (Sakaguchi et al., 2021), ARC-e (Clark et al.,
+2018), ARC-c (Clark et al., 2018) Hellaswag (Zellers et al.,
+2019)) in the Appendix D, further verifying the robustness
+of our proposed BiLLM to the binarization of LLMs.
+Baseline. Our primary baseline is PB-LLM (Shang et al.,
+2023), the most recent PTQ approach on binary LLMs.
+GPTQ (Frantar et al., 2022) and vanilla RTN are also se-
+lected. GPTQ is currently the advanced technology in PTQ,
+and many works(Lin et al., 2023; Dettmers et al., 2023b;
+Shang et al., 2023) choose it as the baseline. Other methods
+oriented towards 8-bit and 4-bit quantization are deemed
+unsuitable for binarization and were thus not considered.
+4.2. Results
+Comparison results. We conduct a meticulous compar-
+ison of the binary performance of different LLMs across
+various model sizes. We deploy the BiLLM on the OPT
+models (Zhang et al., 2022) under the condition of a block
+size equal to 128. As seen in Table 2, the model outputs
+under the RTN and GPTQ methods have already collapsed
+at 1-bit weights, whereas BiLLM still maintains reasonable
+linguistic output capabilities with an average weight of 1.1
+bits. In comparison with PB-LLM at 1.7 bits, our method
+achieves a 35% reduction in weight bit-width while enhanc-
+ing the performance of different sizes of the OPT model by
+49.4% to 77.0%. It is noteworthy that when the parameter
+size exceeds 30B, BiLLM can achieve performance nearly
+equivalent to that of GPTQ with 3-bit quantization.
+Due to the exceptional performance of the LLaMA (Touvron
+et al., 2023a;b) series, they have become the foundation for
+many open-source models (Chiang et al., 2023). Then, in
+Table 3, we evaluate the perplexity of outputs from the
+LLaMA series models using different methods. It can be
+observed that, even at ultra-low weight bit-width, BiLLM
+consistently outperforms the 2-bit RTN and GPTQ methods.
+And 1.08 bits BiLLM for LLaMA-65B and LLaMA2-70B
+even surpasses the output of the full-precision OPT-66B
+model, which demonstrates the further binary potential of
+the LLaMA family. We extend perplexity evaluation to the
+PTB and C4 datasets. Figure 7 illustrates the performance
+of the 7B parameter LLaMA series as well as the 6.7B
+OPT models. BiLLM continues to achieve a leading edge in
+performance compared to other methods (more additional
+comparisons are discussed in Appendix D).
+Experiments of instruction-tuned models. Instruction
+fine-tuning can significantly improve the application capa-
+bilities of the model and has become a necessary process for
+LLMs deployment in different scenarios (Wei et al., 2021;
+Sanh et al., 2021; Chiang et al., 2023). We also deployed
+BiLLM on the recently popular fine-tuning instruction model
+Vicuna for benchmark testing. As shown in Table 4, the
+7
+
+BiLLM: Pushing the Limit of Post-Training Quantization for LLMs
+Table 3: Perplexity of RTN, GPTQ, PB-LLM, BiLLM on LLaMA Family. The columns represent the perplexity results on
+Wikitext2 datasets with different model sizes.
+Model
+Method
+Block
+Size
+Weight
+Bits
+7B
+13B
+30B
+65B/70B*
+Full Precision
+-
+16.00
+5.68
+5.09
+4.10
+3.53
+RTN
+-
+2.00
+106767.34
+57409.93
+26704.36
+19832.87
+GPTQ
+128
+2.00
+152.31
+20.44
+13.01
+8.78
+LLaMA
+RTN
+-
+1.00
+168388.00
+1412020.25
+14681.76
+65253.24
+GPTQ
+128
+1.00
+267001.72
+113894.12
+67093.73
+25082.88
+PB-LLM †
+128
+1.70
+102.36
+36.60
+33.67
+12.53
+BiLLM ‡
+128
+1.09
+35.04
+15.14
+10.52
+8.49
+Full Precision
+-
+16.00
+5.47
+4.88
+N/A
+3.32
+RTN
+-
+2.00
+17788.93
+51145.61
+N/A
+26066.13
+GPTQ
+128
+2.00
+60.45
+19.70
+N/A
+9.12
+LLaMA2
+RTN
+-
+1.00
+157058.34
+47902.32
+N/A
+160389.91
+GPTQ
+128
+1.00
+115905.67
+9387.80
+N/A
+74395.42
+PB-LLM †
+128
+1.70
+69.20
+151.09
+N/A
+28.37
+BiLLM ‡
+128
+1.08
+32.48
+16.77
+N/A
+8.41
+The table gives the average bit-width of the LLaMA family. N/A: LLaMA2 do not have 30B version. *: LLaMA has 65B version and
+LLaMA2 has 70B version.
+9564.53
+43.24
+5361.30
+80.15
+3877.38
+40.52
+ptb
+c4
+LLaMA-2-7B
+GPTQ-2bits
+PB-LLM-1.7bits
+BiLLM-1.1bits
+80.43
+40.47
+193.95
+89.85
+73.63
+43.16
+ptb
+c4
+OPT-6.7B
+GPTQ-2bits
+PB-LLM-1.7bits
+BiLLM-1.1bits
+2020.51
+101.3
+891.15
+100.38
+421.27
+39.59
+ptb
+c4
+LLaMA-7B
+GPTQ-2bits
+PB-LLM-1.7bits
+BiLLM-1.1bits
+Figure 7: GTPQ, PB-LLM, BiLLM performed on the PTB and c4 datasets, mainly on LLaMA-7B, LLaMA2-7B, and
+OPT-6.7B, and we found that BiLLM performed relatively well.
+Table 4: Perplexity of BiLLM on Vicuna-7B and Vicuna-
+13B. The columns of different models represent the perplex-
+ity results on Wikitext2, PTB, and C4 datasets. The block
+size is set to 128.
+Model
+Method Weight
+Bits
+Wiki
+-text2 ↓
+PTB ↓
+C4 ↓
+GPTQ
+2.00
+109.56 6227.73
+64.28
+Vicuna-7B
+PB-LLM
+1.70
+68.01
+477.52
+67.23
+BiLLM
+1.08
+33.00
+332.17
+36.24
+GPTQ
+2.00
+41.75
+465.94
+40.57
+Vicuna-13B PB-LLM
+1.70
+362.17
+772.44 346.16
+BiLLM
+1.08
+36.57
+300.31
+28.76
+perplexity performance of GPTQ and PB-LLM are com-
+pared on Vicuna-7B and Vicuna-13B with three evaluations.
+BiLLM can achieve better performance at an average weight
+bit of 1.08, which further proves that BiLLM’s universal
+LLMs binarization potential. We also provide dialogue
+examples of binary models in Appeandix F.
+1
+10
+100
+1000
+10000
+100000
+1000000
+wikitext2
+ptb
+c4
+Perplexity 
+LLaMA-7B
+RTN
+Salient-only
+Splitting-only
+Both-BiLLM
+1
+10
+100
+1000
+10000
+100000
+wikitext2
+ptb
+c4
+Perplexity 
+OPT-6.7B
+RTN
+Salient-only
+Splitting-only
+Both-BiLLM
+Figure 8: Ablation results of salient-only and splitting-only
+methods on OPT and LLaMA.
+Zero-Shot results. To conduct a more comprehensive eval-
+uation of binary LLMs, we extend our experiments to 7
+zero-shot datasets. Appendix D provides detailed results of
+our approach compared to previous methods in ultra-low bit
+quantization, further showing the outlier of BiLLM.
+Ablation results. BiLLM enhances binarization precision
+through two primary methods: structured salient binariza-
+tion via residual approximation, and non-salient weight bina-
+rization via optimal splitting. To examine the effects of these
+8
+
+BiLLM: Pushing the Limit of Post-Training Quantization for LLMs
+Table 5: Model size comparison of LLaMA family.
+Method
+LLaMA-7B
+LLaMA2-7B
+LLaMA-13B
+LLaMA2-13B
+LLaMA-30B
+LLaMA-65B
+LLaMA-70B
+FP16
+13.5GB
+13.5 GB
+24.2 GB
+25.0 GB
+60.5 GB
+121.0 GB
+129.3 GB
+BiLLM
+1.5 GB
+1.6 GB
+2.7 GB
+2.8 GB
+6.1 GB
+14.8 GB
+15.4 GB
+Table 6: The memory occupancy rate compared with FP16
+and the corresponding accuracy on OPT-30B.
+Configuration
+BiLLM PB-LLM (10%) GPTQ
+Average bit-width
+1.11
+1.7
+2
+Memory Occupancy∗
+9.70%
+16.50% 13.30%
+PPL on WikiText-2
+12.71
+25.14
+15.71
+*:
+Equation
+of
+memory
+occupancy
+[R6]:
+memory occupancy compared w FP16
+=
+(bi-
+nary unsalint weight size + residual binary salint weight size
++ CSR compressed bitmap size + scaling factor size) / float-
+ing point weight size.
+Table 7: Memory occupancy rate compared with FP16 OPT.
+Model
+BiLLM
+GPTQ-2bit
+OPT-1.3B
+9.40%
+13.30%
+OPT-2.7B
+9.50%
+13.30%
+OPT-6.7B
+9.30%
+13.30%
+OPT-13B
+9.70%
+13.30%
+OPT-30B
+9.70%
+13.30%
+strategies, we conducted decomposition experiments. As
+shown in Figure 8, both approaches significantly improve
+binary performance. Notably, we found that OPT-6.7B
+exhibits greater sensitivity to the splitting of non-salient
+weights (the blue line is lower than the green line), whereas
+LLaMA-7B is more responsive to salient weights’ residual
+approximation (the green line is lower than the blue line).
+This further indicates that different LLMs exhibit varying
+responses to distinct binarization optimization strategies,
+showing that the two binarization strategies proposed by
+BiLLM are efficient to various LLMs. We further discuss
+details on the block-size ablation results in Appendix E.
+Model size. In Table 5, we present the FP16 of models
+ranging from LLaMA-7B to 65B and LLaMA2-7B to 70B,
+as well as the sizes of binarized models after compression
+by BiLLM. Notably, BiLLM achieved close to a tenfold
+compression of weights across LLMs of different sizes.
+GPU memory. The motivation of our BiLLM is to push
+the bit-width compression limit of LLM weights under post-
+training conditions, which reduces both the storage and
+GPU memory footprint of LLMs and retains their accuracy
+to the greatest extent for being practical. Although binarized
+GEMM is hard to implement directly due to fine-grained
+grouping, the extreme bit-width compression of our BiLLM
+brings significant savings in GPU memory requirements
+(size and bandwidth), which is considered to be one of
+the most significant efficiency bottlenecks of LLM infer-
+ence (Gholami et al., 2024; Dettmers et al.; 2023a; Xiao
+et al., 2023; Chee et al., 2024; Shang et al., 2023). Here, we
+provide detailed memory and performance comparisons to
+demonstrate the advantages of BiLLM (as shown in Table
+A.1): for the OPT-30B model, BiLLM (1.1-bit) achieves
+a 41.57% and 27.07% memory compression improvement
+compared to PB-LLM (1.7-bit) and GPTQ (2-bit), respec-
+tively, while enhancing accuracy by 49.44% and 19.10%.
+We further provide a detailed comparison of memory usage
+with the 2-bit GPTQ method under different sizes of LLM
+in Table 7. The memory occupancy of our BiLLM is only
+about 69.9% of 2-bit quantization, which shows the great
+memory-saving benefit of our BiLLM from the extreme
+bit-width reduction, and we also achieve higher accuracy
+with the significantly saved memory.
+5. Conclusions
+This work proposed a novel post-training binary quantiza-
+tion method named BiLLM, specifically tailored for com-
+pressing pre-trained LLMs. Inspired by the characteristics
+of weight’s value and Hessian distributions, we adopted a bi-
+nary residual approximation for structurally salient weights
+to preserve their capabilities at ultra-low bits. For non-
+salient weights, we employed optimal segmentation for
+grouped binarization. Our results demonstrate that LLMs
+can undergo a one-time weight quantization at ultra-low bits
+without substantial loss of precision. BiLLM has pioneered
+the achievement of LLM performance guarantees at an av-
+erage bit rate close to 1 bit. We validated the binarization
+performance of BiLLM across multiple open-source LLM
+families and conducted generalization tests on a fine-tuned
+instruction model. BiLLM advances the bit-width quantiza-
+tion frontier of LLMs, promising to facilitate the deployment
+of LLMs in edge scenarios and resource-constrained devices,
+and encourages further exploration in LLMs compression.
+Acknowledgement.
+This work was supported by
+the National Science and Technology Major Project
+(2021ZD0110503), the Swiss National Science Foundation
+(SNSF) project 200021E 219943 Neuromorphic Attention
+Models for Event Data (NAMED), the Baidu Scholarship,
+and the National Natural Science Foundation of China (No.
+62306025, No. 92367204).
+9
+
+BiLLM: Pushing the Limit of Post-Training Quantization for LLMs
+Impact Statement
+This paper presents work whose goal is to advance the field
+of Machine Learning. There are many potential societal
+consequences of our work, none which we feel must be
+specifically highlighted here.
+References
+Bengio, Y., L´eonard, N., and Courville, A. Estimating or prop-
+agating gradients through stochastic neurons for conditional
+computation. arXiv preprint arXiv:1308.3432, 2013.
+Bisk, Y., Zellers, R., Gao, J., Choi, Y., et al. Piqa: Reasoning about
+physical commonsense in natural language. In Proceedings of
+the AAAI conference on artificial intelligence, volume 34, pp.
+7432–7439, 2020.
+Blundell, C., Cornebise, J., Kavukcuoglu, K., and Wierstra, D.
+Weight uncertainty in neural network. In International confer-
+ence on machine learning, pp. 1613–1622. PMLR, 2015.
+Chan, C.-Y. and Ioannidis, Y. E. Bitmap index design and evalua-
+tion. In Proceedings of the 1998 ACM SIGMOD international
+conference on Management of data, pp. 355–366, 1998.
+Chee, J., Cai, Y., Kuleshov, V., and De Sa, C. M. Quip: 2-bit quan-
+tization of large language models with guarantees. Advances in
+Neural Information Processing Systems, 36, 2024.
+Chiang, W.-L., Li, Z., Lin, Z., Sheng, Y., Wu, Z., Zhang, H., Zheng,
+L., Zhuang, S., Zhuang, Y., Gonzalez, J. E., et al. Vicuna:
+An open-source chatbot impressing gpt-4 with 90%* chatgpt
+quality. See https://vicuna. lmsys. org (accessed 14 April 2023),
+2023.
+Clark, C., Lee, K., Chang, M.-W., Kwiatkowski, T., Collins, M.,
+and Toutanova, K. Boolq: Exploring the surprising difficulty
+of natural yes/no questions. arXiv preprint arXiv:1905.10044,
+2019.
+Clark, P., Cowhey, I., Etzioni, O., Khot, T., Sabharwal, A.,
+Schoenick, C., and Tafjord, O. Think you have solved question
+answering? try arc, the ai2 reasoning challenge. arXiv preprint
+arXiv:1803.05457, 2018.
+Courbariaux, M., Hubara, I., Soudry, D., El-Yaniv, R., and Bengio,
+Y. Binarized neural networks: Training deep neural networks
+with weights and activations constrained to+ 1 or-1. arXiv
+preprint arXiv:1602.02830, 2016.
+Dettmers, T., Lewis, M., Belkada, Y., and Zettlemoyer, L. Llm.
+int8 (): 8-bit matrix multiplication for transformers at scale,
+2022. CoRR abs/2208.07339.
+Dettmers, T., Lewis, M., Belkada, Y., and Zettlemoyer, L. Llm.
+int8 (): 8-bit matrix multiplication for transformers at scale.
+arXiv preprint arXiv:2208.07339, 2022.
+Dettmers, T., Pagnoni, A., Holtzman, A., and Zettlemoyer, L.
+Qlora: Efficient finetuning of quantized llms. arXiv preprint
+arXiv:2305.14314, 2023a.
+Dettmers, T., Svirschevski, R., Egiazarian, V., Kuznedelev,
+D., Frantar, E., Ashkboos, S., Borzunov, A., Hoefler, T.,
+and Alistarh, D.
+Spqr: A sparse-quantized representation
+for near-lossless llm weight compression.
+arXiv preprint
+arXiv:2306.03078, 2023b.
+Dong, Z., Yao, Z., Gholami, A., Mahoney, M. W., and Keutzer,
+K. Hawq: Hessian aware quantization of neural networks with
+mixed-precision. In Proceedings of the IEEE/CVF International
+Conference on Computer Vision, pp. 293–302, 2019.
+Fang, J., Shafiee, A., Abdel-Aziz, H., Thorsley, D., Georgiadis, G.,
+and Hassoun, J. H. Post-training piecewise linear quantization
+for deep neural networks. In Computer Vision–ECCV 2020:
+16th European Conference, Glasgow, UK, August 23–28, 2020,
+Proceedings, Part II 16, pp. 69–86. Springer, 2020.
+Faraone, J., Fraser, N., Blott, M., and Leong, P. H. Syq: Learning
+symmetric quantization for efficient deep neural networks. In
+Proceedings of the IEEE Conference on Computer Vision and
+Pattern Recognition, pp. 4300–4309, 2018.
+Frantar, E. and Alistarh, D. Optimal brain compression: A frame-
+work for accurate post-training quantization and pruning. Ad-
+vances in Neural Information Processing Systems, 35:4475–
+4488, 2022.
+Frantar, E. and Alistarh, D. Sparsegpt: Massive language models
+can be accurately pruned in one-shot. In International Confer-
+ence on Machine Learning, pp. 10323–10337. PMLR, 2023.
+Frantar, E., Ashkboos, S., Hoefler, T., and Alistarh, D. Gptq:
+Accurate post-training quantization for generative pre-trained
+transformers. arXiv preprint arXiv:2210.17323, 2022.
+Gholami, A., Yao, Z., Kim, S., Hooper, C., Mahoney, M. W., and
+Keutzer, K. Ai and memory wall. IEEE Micro, 2024.
+Helwegen, K., Widdicombe, J., Geiger, L., Liu, Z., Cheng, K.-T.,
+and Nusselder, R. Latent weights do not exist: Rethinking
+binarized neural network optimization. Advances in neural
+information processing systems, 32, 2019.
+Jacob, B., Kligys, S., Chen, B., Zhu, M., Tang, M., Howard, A.,
+Adam, H., and Kalenichenko, D. Quantization and training of
+neural networks for efficient integer-arithmetic-only inference.
+In Proceedings of the IEEE conference on computer vision and
+pattern recognition, pp. 2704–2713, 2018.
+Jain, S., Venkataramani, S., Srinivasan, V., Choi, J., Gopalakrish-
+nan, K., and Chang, L. Biscaled-dnn: Quantizing long-tailed
+datastructures with two scale factors for deep neural networks.
+In Proceedings of the 56th Annual Design Automation Confer-
+ence 2019, pp. 1–6, 2019.
+LeCun, Y., Denker, J., and Solla, S. Optimal brain damage. Ad-
+vances in neural information processing systems, 2, 1989.
+Lee, C., Jin, J., Kim, T., Kim, H., and Park, E. Owq: Lessons
+learned from activation outliers for weight quantization in large
+language models. arXiv preprint arXiv:2306.02272, 2023.
+Li, Y., Gong, R., Tan, X., Yang, Y., Hu, P., Zhang, Q., Yu,
+F., Wang, W., and Gu, S. Brecq: Pushing the limit of post-
+training quantization by block reconstruction. arXiv preprint
+arXiv:2102.05426, 2021.
+Li, Z., Ni, B., Zhang, W., Yang, X., and Gao, W. Performance
+guaranteed network acceleration via high-order residual quanti-
+zation. In Proceedings of the IEEE international conference on
+computer vision, pp. 2584–2592, 2017.
+Lin, J., Tang, J., Tang, H., Yang, S., Dang, X., and Han, S. Awq:
+Activation-aware weight quantization for llm compression and
+acceleration. arXiv preprint arXiv:2306.00978, 2023.
+10
+
+BiLLM: Pushing the Limit of Post-Training Quantization for LLMs
+Liu, Z., Oguz, B., Zhao, C., Chang, E., Stock, P., Mehdad, Y., Shi,
+Y., Krishnamoorthi, R., and Chandra, V. Llm-qat: Data-free
+quantization aware training for large language models. arXiv
+preprint arXiv:2305.17888, 2023.
+Marcus, M., Kim, G., Marcinkiewicz, M. A., MacIntyre, R., Bies,
+A., Ferguson, M., Katz, K., and Schasberger, B. The penn
+treebank: Annotating predicate argument structure. In Hu-
+man Language Technology: Proceedings of a Workshop held at
+Plainsboro, New Jersey, March 8-11, 1994, 1994.
+Merity, S., Xiong, C., Bradbury, J., and Socher, R. Pointer sentinel
+mixture models. arXiv preprint arXiv:1609.07843, 2016.
+Mihaylov, T., Clark, P., Khot, T., and Sabharwal, A. Can a suit of
+armor conduct electricity? a new dataset for open book question
+answering. arXiv preprint arXiv:1809.02789, 2018.
+Park, E., Yoo, S., and Vajda, P. Value-aware quantization for
+training and inference of neural networks. In Proceedings of
+the European Conference on Computer Vision (ECCV), pp. 580–
+595, 2018.
+Paszke, A., Gross, S., Massa, F., Lerer, A., Bradbury, J., Chanan,
+G., Killeen, T., Lin, Z., Gimelshein, N., Antiga, L., et al. Py-
+torch: An imperative style, high-performance deep learning
+library. Advances in neural information processing systems, 32,
+2019.
+Qin, H., Gong, R., Liu, X., Shen, M., Wei, Z., Yu, F., and Song, J.
+Forward and backward information retention for accurate binary
+neural networks. In Proceedings of the IEEE/CVF conference
+on computer vision and pattern recognition, pp. 2250–2259,
+2020.
+Qin, H., Ding, Y., Zhang, M., Yan, Q., Liu, A., Dang, Q., Liu,
+Z., and Liu, X. Bibert: Accurate fully binarized bert. arXiv
+preprint arXiv:2203.06390, 2022.
+Qin, H., Zhang, M., Ding, Y., Li, A., Cai, Z., Liu, Z., Yu, F.,
+and Liu, X. Bibench: Benchmarking and analyzing network
+binarization. arXiv preprint arXiv:2301.11233, 2023.
+Raffel, C., Shazeer, N., Roberts, A., Lee, K., Narang, S., Matena,
+M., Zhou, Y., Li, W., and Liu, P. J. Exploring the limits of trans-
+fer learning with a unified text-to-text transformer. The Journal
+of Machine Learning Research, 21(1):5485–5551, 2020.
+Rastegari, M., Ordonez, V., Redmon, J., and Farhadi, A. Xnor-
+net: Imagenet classification using binary convolutional neural
+networks. In European conference on computer vision, pp.
+525–542. Springer, 2016.
+Sakaguchi, K., Bras, R. L., Bhagavatula, C., and Choi, Y. Wino-
+grande: An adversarial winograd schema challenge at scale.
+Communications of the ACM, 64(9):99–106, 2021.
+Sanh, V., Webson, A., Raffel, C., Bach, S. H., Sutawika, L.,
+Alyafeai, Z., Chaffin, A., Stiegler, A., Scao, T. L., Raja, A.,
+et al. Multitask prompted training enables zero-shot task gener-
+alization. arXiv preprint arXiv:2110.08207, 2021.
+Shang, Y., Yuan, Z., Wu, Q., and Dong, Z. Pb-llm: Partially bina-
+rized large language models. arXiv preprint arXiv:2310.00034,
+2023.
+Touvron, H., Lavril, T., Izacard, G., Martinet, X., Lachaux, M.-A.,
+Lacroix, T., Rozi`ere, B., Goyal, N., Hambro, E., Azhar, F., et al.
+Llama: Open and efficient foundation language models. arXiv
+preprint arXiv:2302.13971, 2023a.
+Touvron, H., Martin, L., Stone, K., Albert, P., Almahairi, A.,
+Babaei, Y., Bashlykov, N., Batra, S., Bhargava, P., Bhosale, S.,
+et al. Llama 2: Open foundation and fine-tuned chat models.
+arXiv preprint arXiv:2307.09288, 2023b.
+Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L.,
+Gomez, A. N., Kaiser, Ł., and Polosukhin, I. Attention is all
+you need. Advances in neural information processing systems,
+30, 2017.
+Wang, H., Ma, S., Dong, L., Huang, S., Wang, H., Ma, L., Yang, F.,
+Wang, R., Wu, Y., and Wei, F. Bitnet: Scaling 1-bit transformers
+for large language models. arXiv preprint arXiv:2310.11453,
+2023.
+Wei, J., Bosma, M., Zhao, V. Y., Guu, K., Yu, A. W., Lester, B.,
+Du, N., Dai, A. M., and Le, Q. V. Finetuned language models
+are zero-shot learners. arXiv preprint arXiv:2109.01652, 2021.
+Wolf, T., Debut, L., Sanh, V., Chaumond, J., Delangue, C., Moi,
+A., Cistac, P., Rault, T., Louf, R., Funtowicz, M., et al. Hug-
+gingface’s transformers: State-of-the-art natural language pro-
+cessing. arXiv preprint arXiv:1910.03771, 2019.
+Xiao, G., Lin, J., Seznec, M., Wu, H., Demouth, J., and Han, S.
+Smoothquant: Accurate and efficient post-training quantization
+for large language models. In International Conference on
+Machine Learning, pp. 38087–38099. PMLR, 2023.
+Yao, Z., Aminabadi, R., Zhang, M., Wu, X., Li, C., and
+He, Y. Z.
+Efficient and affordable post-training quantiza-
+tion for large-scale transformers, 2022.
+URL https://arxiv.
+org/abs/2206.01861.
+Yao, Z., Li, C., Wu, X., Youn, S., and He, Y. A comprehensive
+study on post-training quantization for large language models.
+arXiv preprint arXiv:2303.08302, 2023.
+You, Y. Audio coding: theory and applications. Springer Science
+& Business Media, 2010.
+Zellers, R., Holtzman, A., Bisk, Y., Farhadi, A., and Choi, Y.
+Hellaswag: Can a machine really finish your sentence? arXiv
+preprint arXiv:1905.07830, 2019.
+Zhang, S., Roller, S., Goyal, N., Artetxe, M., Chen, M., Chen,
+S., Dewan, C., Diab, M., Li, X., Lin, X. V., et al.
+Opt:
+Open pre-trained transformer language models. arXiv preprint
+arXiv:2205.01068, 2022.
+Zhou, S., Wu, Y., Ni, Z., Zhou, X., Wen, H., and Zou, Y. Dorefa-
+net: Training low bitwidth convolutional neural networks with
+low bitwidth gradients. arXiv preprint arXiv:1606.06160, 2016.
+Zhu, X., Li, J., Liu, Y., Ma, C., and Wang, W. A survey on
+model compression for large language models. arXiv preprint
+arXiv:2308.07633, 2023.
+11
+
+BiLLM: Pushing the Limit of Post-Training Quantization for LLMs
+A. BiLLM Implementation
+Algorithm 2 BiLLM: Detailed functions process
+func salient (W, Hc)
+1: S := W2/[Hc
+b:b+βb:b+β]2 // salient matrix
+2: rows{·} := topk(sum(abs(S)).(dim = 0))
+3: e = inf // searching error
+4: n∗= 0 // optimal number of salient columns
+5: for i = 1, 2, ..., len(rows) do
+6:
+B1 := binary(W:,j, j∈rows[:i])
+7:
+B2 := binary(W:,j, j /∈rows[:i])
+8:
+if ||W −(B1 ∪B2)||2 < e then
+9:
+e := ||W −(B1 ∪B2)||2
+10:
+n∗:= i
+11:
+end if
+12: end for
+13: return rows{: n∗}
+func binary (W)
+1: α := ||W||ℓ1
+m
+2: B := α · sign(W)
+3: return B
+func res approximation (W)
+1: B1 := binary(W)
+2: R := W −B1
+3: B2 := binary(R)
+4: B := B1 + B2
+5: return B
+func seg search (W)
+1: e = inf // searching error
+2: p∗= 0 // optimal break-point
+3: for i = 0.1, 0.2, 0.3, ..., 9 do
+4:
+p := i · max(abs(W))
+5:
+B1 := binary(W|wi,j|≤p)
+6:
+B2 := binary(W|wi,j|>p)
+7:
+if ||W −(B1 + B2)||2 < e then
+8:
+e := ||W −(B1 + B2)||2
+9:
+p∗:= p
+10:
+end if
+11: end for
+12: return p∗
+BiLLM necessitates the structured selection of salient rows and their subsequent quantization through residual approximation
+binarization. This is followed by dividing the non-salient weights, which exhibit a bell-shaped distribution, into a sparse area
+and a concentrated area. The division requires the optimization of the segmentation point p∗by minimizing quantization
+loss. Ultimately, the two regions of non-salient weights are binarized separately to derive the final binary weights for LLMs.
+The implementation details of the aforementioned function are enumerated in Algorithm 2.
+B. Quantization Error
+Quantization error definition for weight distribution The numerical range covered by the uniform quantizer spans from
+[Xmin, Xmax]. The number of intervals post-quantization, denoted as M, typically equals 2b, where b represents the target
+bit-width of quantization. So the quantization step size is:
+∆= Xmax −Xmin
+M
+(15)
+The boundaries can be calculated as:
+bq = Xmin + ∆· l
+(16)
+where l ∈0, 1, ..., M, and we have bq ∈{−α, 0, α} under binarization. Then we give the mean of each interval:
+xq = Xmin + ∆· l −0.5∆
+(17)
+where l ∈1, ..., M. In this quantization scheme, we can get the MSQE from (You, 2010):
+θ2 =
+M
+X
+l=1
+Z Xmin+∆·l
+Xmin+∆·(l−1)
+(Xmin + ∆· l −0.5∆−x)2g(x)dx
+(18)
+then we let the y to replace the Xmin + ∆· l −0.5∆−x part, so the Equation (18) becomes:
+θ2 =
+M
+X
+l=1
+Z 0.5∆
+−0.5∆
+y2f[Xmin + ∆· l −(y + 0.5∆)]2dx
+(19)
+12
+
+BiLLM: Pushing the Limit of Post-Training Quantization for LLMs
+consider the Equation (16) and Equation (17), the above equation becomes:
+θ2 =
+M
+X
+l=1
+Z 0.5∆
+−0.5∆
+x2f(xp −x)dx
+(20)
+The aforementioned reasoning indicates that the MSQE of a uniform quantizer depends on the PDF and the quantization
+bit-width. Due to previous observations of the weights in pretrained LLMs, we have eliminated the salient weights. The
+remaining distribution of non-salient weights’ g(x), is not uniform and resembles a Gaussian distribution. In binarization,
+therefore, we substitute α into Equation (18), resulting in:
+θ2
+=
+M
+X
+l=1
+Z (l−0.5M)∆
+(l−1−0.5M)∆
+[(l −0.5 −0.5M)∆−x]2g(x)dx
+=
+Z 0
+Xmin
+(−α −x)2g(x)dx +
+Z Xmax
+0
+(α −x)2g(x)dx
+(21)
+C. Searching Curve of Salient Column and Non-salient Distribution
+Q
+K
+V
+Out
+FC1
+FC2
+Figure 9: Block-wise searching curve of salient columns in OPT-6.7B. The majority of the curves indicate that the minimal
+quantization error can be achieved at the block level by considering only a few columns as salient. The Out Projection layer
+has a larger number of salient columns, hence varying coverage for each block. The distribution in the FC layer is more
+dispersed. After optimal searching, the overall average weight bit is merely 1.1 bits.
+We implemented a column-level segmentation and formulated a minimal-error column number search, as delineated in
+Equation (5). The identification of the optimal count of salient column groups commences with the column exhibiting the
+highest salience. To mitigate the increase in bit-width resulting from residual approximation, we confined the search range
+to between 3 to 30 columns. Figure 9 illustrates the search curve pertinent to the inaugural Transformer block within the
+OPT6.7B model. It includes six layers of operators (Q, K, V, Out Projection, FC1, and FC2), with each layer showing
+the search curves for the first five blocks. Figure 15 elucidates the clustering of salient weights, suggesting that a majority
+of the layers and blocks are capable of attaining minimal quantization errors with a limited number of salient columns.
+13
+
+BiLLM: Pushing the Limit of Post-Training Quantization for LLMs
+The block-wise changes in weight distribution brought about by OBC (Frantar & Alistarh, 2022) introduce fluctuations
+in the search curve; however, the structured selection still manages to encompass the majority of salient weights. In the
+Feedforward layer, where salient weight distribution is more scattered, the search curve leans towards employing residual
+approximation across an increased number of columns. Nonetheless, Table 1, displaying the average weight bit numbers
+across various LLMs, confirms that this search strategy effectively maintains weight compression at approximately 1.1 bits.
+Figure 10 shows the unstructured search curve for the non-salient weights in the OPT6.7B model, with the same composition
+as that in Figure 9. The horizontal axis represents the ratio between p and the maximum weight value. Despite searching
+on a block-wise basis, the search curve still exhibits convex properties, indicating the presence of an optimal p∗. This
+phenomenon demonstrates that the non-salient weights exhibit characteristics closely resembling an ideal Gaussian or
+Laplacian distribution (You, 2010; Fang et al., 2020).
+Q
+K
+V
+Out
+FC1
+FC2
+Figure 10: Block-wise splitting curve of bell-shaped distribution in OPT6.7B. The overall presentation exhibits the
+characteristics of a convex function, fundamentally aligning with the theoretical optimal point in terms of theoretical basis.
+D. Multi-evaluation Comparisons
+Perplexity results on PTB and C4.
+We use tables in the main text to show the perplexity of the three methods GPTQ, PB-LLM, and BiLLM on the Wikitext2
+dataset, and bar charts to show the perplexity results for LLaMA-7B, LLaMA2-7B, and OPT-6.7B on the PTB and C4
+datasets. In the appendix, we show the quantitative comparison results for models of other sizes on the PTB and C4 datasets
+with more images.
+In Figure 11, we find that although different models have different perplexity results, they still roughly follow the law that
+the larger the model, the lower the perplexity. BiLLM is generally still relatively better than the GPTQ and PB-LLM results
+in terms of perplexity with a lower bit-width configuration, while PB-LLM and GPTQ are higher or lower than each other,
+with slightly inferior results at very low bits.
+Zero-shot results
+For completeness of testing, we have also tested and compared metrics such as the accuracy of GPTQ, PB-LLM, and BiLLM
+on datasets such as PIQA and BoolQ, all using Zero Shot’s experimental setup. From Table 8, We find that despite the loss
+14
+
+BiLLM: Pushing the Limit of Post-Training Quantization for LLMs
+83.23
+15.38
+141.09
+35.85
+47.54
+12.26
+ptb
+c4
+LLaMA-30B
+GPTQ-2bits
+PB-LLM-1.7bits
+BiLLM-1.1bits
+20.86
+15.13
+35.05
+25.29
+21.24
+16.15
+ptb
+c4
+OPT-30B
+GPTQ-2bits
+PB-LLM-1.7bits
+BiLLM-1.1bits
+163.72
+69.07
+278.52
+180.05
+103.82
+66.51
+ptb
+c4
+OPT-1.3B
+GPTQ-2bits
+PB-LLM-1.7bits
+BiLLM-1.1bits
+87.22
+57.75
+143.93
+96.13
+76.99
+45.82
+ptb
+c4
+OPT-2.7B
+GPTQ-2bits
+PB-LLM-1.7bits
+BiLLM-1.1bits
+63.9
+11.56
+66.8
+16.92
+46.99
+11.12
+ptb
+c4
+LLaMA-65B
+GPTQ-2bits
+PB-LLM-1.7bits
+BiLLM-1.1bits
+109.49
+61.01
+45.24
+34.98
+18.57
+14.13
+ptb
+c4
+OPT-66B
+GPTQ-2bits
+PB-LLM-1.7bits
+BiLLM-1.1bits
+470.34
+29.47
+719.25
+144.59
+332.09
+27.54
+ptb
+c4
+LLaMA-2-13B
+GPTQ-2bits
+PB-LLM-1.7bits
+BiLLM-1.1bits
+27.16
+18.83
+110.47
+53.26
+26.98
+19.89
+ptb
+c4
+OPT-13B
+GPTQ-2bits
+PB-LLM-1.7bits
+BiLLM-1.1bits
+196.7
+21.2
+213.17
+39.51
+85.32
+16.93
+ptb
+c4
+LLaMA-13B
+GPTQ-2bits
+PB-LLM-1.7bits
+BiLLM-1.1bits
+Figure 11: GPTQ, PB-LLM, BiLLM performed on the PTB and C4 datasets, mainly on LLaMA-13B, LLaMA2-13B,
+OPT-13B, and so on. The results showed that BiLLM performed relatively well.
+in quantification, a side-by-side comparison between the three methods still shows BiLLM to be superior overall, testing one
+level higher on some datasets, while the effect of some random perturbations, although present, does not pull down BiLLM’s
+performance across the board. This suggests that BiLLM’s quantization results have significantly improved performance at
+very low bits, and further validates the conclusions.
+Table 8: Accuracy on 7 data sets, from binarization LLaMA, LLaMA2, and OPT, and we also compare the results among
+GPTQ, PB-LLM, and BiLLM to validate the quantization effect.
+Model
+Method Weight
+Bits
+Block
+Size
+PIQA ↑BoolQ ↑OBQA ↑Winogrande ↑ARC-e ↑ARC-c ↑Hellaswag ↑
+GPTQ
+2.00
+128
+52.8
+50.0
+28.2
+49.3
+26.6
+29.5
+26.3
+LLaMA-7B
+PB-LLM
+1.70
+128
+54.6
+59.7
+30.4
+50.6
+28.2
+24.6
+28.7
+BiLLM
+1.09
+128
+61.2
+62.7
+31.8
+51.1
+36.0
+25.7
+36.8
+GPTQ
+2.00
+128
+51.1
+43.9
+29.0
+50.8
+26.6
+28.5
+26.3
+LLaMA2-7B PB-LLM
+1.70
+128
+53.8
+62.3
+30.2
+49.3
+28.0
+25.0
+27.7
+BiLLM
+1.08
+128
+60.6
+61.8
+33.2
+52.4
+36.2
+24.4
+34.8
+GPTQ
+2.00
+128
+56.6
+51.1
+25.6
+51.2
+31.3
+22.9
+30.4
+OPT-6.7B
+PB-LLM
+1.70
+128
+57.6
+55.5
+24.2
+47.7
+33.2
+21.0
+31.0
+BiLLM
+1.11
+128
+58.6
+62.2
+29.0
+51.5
+34.1
+23.9
+31.9
+E. Ablation of BiLLM with different block size
+To explore the effect of different chunk sizes on the quantization effect of BiLLM, we set up block size settings including 32
+columns and 64 columns up to 512 columns and performed quantization experiments on them. The results show that the
+overall perplexity is lower as the chunk granularity becomes finer and the number of bits used becomes relatively smaller.
+15
+
+BiLLM: Pushing the Limit of Post-Training Quantization for LLMs
+We believe this is because the smaller the chunks, the finer the data representation, and the more scale is used, but increasing
+the diversity of quantization results also increases the weighting overhead. A block size of 128 can better balance the
+bit-width and quantization effect.
+Table 9: Perplexity on Wikitext2, PTB, and C4 with different block size settings on BiLLM.
+Model
+Block Size
+Wikitext2
+PTB
+C4
+512
+74.14
+1078.90
+81.76
+256
+48.91
+574.34
+57.60
+LLaMA-7B
+128
+35.04
+421.27
+39.59
+64
+27.23
+399.81
+27.74
+32
+17.56
+263.39
+19.85
+512
+52.90
+267.82
+43.86
+256
+43.69
+232.34
+43.21
+LLaMA2-7B
+128
+32.48
+3877.38
+40.52
+64
+20.12
+830.36
+24.46
+32
+13.58
+440.40
+17.34
+512
+151.81
+257.22
+101.96
+256
+84.42
+116.44
+77.25
+OPT-6.7B
+128
+35.36
+73.63
+43.16
+64
+33.36
+48.16
+31.94
+32
+20.48
+31.02
+21.47
+F. Dialog Examples
+In this section, we show some dialogue examples of binarized LLaMA-13B and Vicuna-13B.
+G. Magnitude and Hessian Distribution of LLMs
+Figure 2 displays the distribution characteristics of weights and Hessian in LLMs. In this section, we provide additional
+examples to illustrate the bell-shaped distribution of weight values and the long-tailed distribution of Hessian weights.
+Figure 13 depicts the distributions of four linear layers in the first Transformer block of the OPT-1.3B model, while Figure 14
+shows the distributions of seven linear layers in the sixth block of the LLaMA-7B model. The selection of these specific
+block positions is intended to demonstrate the universality of these distribution characteristics in LLMs.
+Figure 15 displays the distribution of sensitive weights across 5 Transformer blocks within the OPT-1.3B model. We present
+the Hessian distribution results for both the attention and feedforward blocks, with the red portion indicating the top 10% of
+the most significant weight distribution. We observed that the salient weights of Q, K, and V in the OPT family tend to
+concentrate in some columns or rows. Moreover, we noticed that salient weights in the Out Projection layer of multi-head
+self-attention blocks are distinctly concentrated in specific columns, supporting our structured selection approach discussed
+in the main text. In contrast, the distribution of salient weights in the feedforward layers is more dispersed. Based on these
+observations, we adopt a sensitivity-based structured search method to identify salient columns.
+16
+
+BiLLM: Pushing the Limit of Post-Training Quantization for LLMs
+Alaska is a state of ___
+Prompt:
+mind & body aided with other person.
+PB-LLM-1.7bit:
+the US, it is situated in North America.
+BiLLM-1.1bit:
+Yangtze and Yellow River locate in ___
+Prompt:
+the lower land.
+PB-LLM-1.7bit:
+the country which is called as the country of the China.
+BiLLM-1.1bit:
+After climbing thirty flights of stairs, he was drenched in 
+sweat and didn't feel much like climbing. I advised him ___
+Prompt:
+he is really not very health.
+PB-LLM-1.7bit:
+to get used now and the next day. After 2 days, he'd do a lot 
+better and his sweat had lower.
+BiLLM-1.1bit:
+LLaMA-13B
+What are the capitals of China, US and Russia?
+Prompt:
+A’s, U’sa and U's were. 2, U’s with, A’s, U’s, U's: W, S’A 
+and U’ with, U’s, or US's, or U's: U's S – with
+PB-LLM-1.7bit:
+The capital of China is Beijing, the capital of US is 
+Washington, DC, and the capital of Russia is Moscow.
+BiLLM-1.1bit:
+I have a friend who lives in New York and I would like to 
+visit him. How would I go there from Paris?
+Prompt:
+I would like it to go to Paris.
+PB-LLM-1.7bit:
+You can fly from Paris to New York, and there are many 
+airlines that can take you there. You can also take a flight 
+to the New York, but you will have to check the schedule, as 
+it will depend.
+BiLLM-1.1bit:
+What should I do after failed in a math exam?
+Prompt:
+I failed to fail.
+PB-LLM-1.7bit:
+Retake math exams if you don’t pass this year. Take more 
+time to study and work on your weak areas. Or you
+need more support for the final, You can also seek outside 
+help in the same subject.
+BiLLM-1.1bit:
+Vicuna-13B
+Figure 12: Some examples of conversations. LLaMA-13B and Vicuna-13B are chosen to show the case of language
+supplementary and Q&A ability. And PB-LLM (int 8, 10%) is selected as the comparison. We color the text to show the
+reasonable or inappropriate responses.
+17
+
+BiLLM: Pushing the Limit of Post-Training Quantization for LLMs
+Figure 13: Different layers weight density distribution (blue) and hessian density distribution (orange) of the 1st Transformer
+block of the OPT-1.3B model
+18
+
+BiLLM: Pushing the Limit of Post-Training Quantization for LLMs
+Figure 14: Different layers weight density distribution (blue) and hessian density distribution (orange) of the 6th Transformer
+block of the LLaMA-7B model
+19
+
+BiLLM: Pushing the Limit of Post-Training Quantization for LLMs
+Figure 15: Distribution of top 10% salient elements in Hessian matrix. The distribution of 1st −5th Transformer blocks in
+OPT-1.3B
+20
