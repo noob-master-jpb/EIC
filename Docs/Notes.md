@@ -314,7 +314,7 @@ The model ran successfully on my local GPU, but some changes may be needed in th
 
 ---
 
-## 5 May 2026, 08:35 PM · @Ayush
+## 5 May 2026, 11:10 PM · @Ayush
 
 ### Model Benchmarking & Validation (Base vs. LoRA)
 1. **Automated Comparison Pipeline**: Developed `benchmark.py` to evaluate the **Gemma 4 31B** base model against the finetuned LoRA adapter.
@@ -327,5 +327,8 @@ The model ran successfully on my local GPU, but some changes may be needed in th
    - **Base Model**: Reverted to manual warp-level intrinsics and manual indexing; failed to utilize modern ROCm library abstractions.
    - **LoRA Model**: **SUCCESS**. Perfectly mapped `cooperative_groups` to `hip_cooperative_groups`, preserving architectural intent and high-level code structure.
 4. **Cloud Ops**: Optimized weight transfers by using direct `wget` from DO Spaces to the cloud droplet, followed by `unzip`.
+
+### ➡️ Next Steps (Planned for Tomorrow)
+*   **Tiered Benchmarking**: Expand the smoke test to a 3-level difficulty suite (Level 1, 2, and 3) to thoroughly stress-test the model's CUDA-to-HIP conversion accuracy across different architectural complexities.
 
 ---
