@@ -313,3 +313,19 @@ The model ran successfully on my local GPU, but some changes may be needed in th
  * Folder Name: `billm_upd`
 
 ---
+
+## 5 May 2026, 08:35 PM · @Ayush
+
+### Model Benchmarking & Validation (Base vs. LoRA)
+1. **Automated Comparison Pipeline**: Developed `benchmark.py` to evaluate the **Gemma 4 31B** base model against the finetuned LoRA adapter.
+   - **VRAM Optimization**: Used "Adapter Toggling" via `model.disable_adapter()` to run both versions in a single session, saving ~60GB of additional VRAM overhead.
+   - **Output Parsing**: Implemented regex-based extraction to isolate C++ code blocks from conversational LLM responses.
+2. **Inference Stability (ROCm Fixes)**:
+   - Resolved a "Gibberish Loop" (looping tokens) on the MI300X by disabling 4-bit quantization and loading in full **16-bit (Bfloat16)** precision.
+   - Implemented sampling parameters (`temperature=0.7`, `top_p=0.9`) to break repetitive token cycles in complex code generation.
+3. **Benchmark Results (CUDA-to-HIP Smoke Test)**:
+   - **Base Model**: Reverted to manual warp-level intrinsics and manual indexing; failed to utilize modern ROCm library abstractions.
+   - **LoRA Model**: **SUCCESS**. Perfectly mapped `cooperative_groups` to `hip_cooperative_groups`, preserving architectural intent and high-level code structure.
+4. **Cloud Ops**: Optimized weight transfers by using direct `wget` from DO Spaces to the cloud droplet, followed by `unzip`.
+
+---
