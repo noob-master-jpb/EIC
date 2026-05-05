@@ -67,7 +67,7 @@ def evaluate_model(model_path):
 
 if __name__ == "__main__":
     # Default to the output directory used by billm.py
-    DEFAULT_MODEL_PATH = "/home/aryarakshit/Documents/AMD Hackathon/PB-LLM/billm/qwen3.5-0.8B-billm"
+    DEFAULT_MODEL_PATH = ".../billm/qwen3.5-0.8B-billm"
     
     model_path = DEFAULT_MODEL_PATH
     if len(sys.argv) > 1:
