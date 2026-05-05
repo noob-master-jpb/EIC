@@ -306,3 +306,10 @@ The model ran successfully on my local GPU, but some changes may be needed in th
 
 ---
 
+## 5 May 2026, 05:35 PM · @Arya 
+
+### BILLM-Modification. `[Status: Done]`
+ * BILLM modification done based from prev code and instructions given by @Ankan.
+ * Folder Name: `billm_upd`
+
+---
