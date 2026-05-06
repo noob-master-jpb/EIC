@@ -243,7 +243,10 @@ The training pipeline has been optimized for the **Gemma 4 31B** model on the `c
 
 1. **PTQ Efficiency** — PB-LLM's magnitude-based weight selection enables a more straightforward and computationally efficient Post-Training Quantization (PTQ) process, which is crucial given our resource constraints.
 2. **QAT Compatibility** — PB-LLM's use of INT8 for salient weights is more compatible with Quantization-Aware Training (QAT) techniques, enabling better fine-tuning and optimization.
-3. **Ease of Implementation** — PB-LLM's partial binarization approach is generally simpler to implement and integrate into existing training pipelines compared to BiLLM's more complex binary residual approximation.
+3. **Ease of Implementation** — PB-LLM's partial binarization approach is generally simpler to implement and integrate into existing training pipelines compared to BiLLM's more complex bi
+nary residual approximation.
+
+
 ---
 
 ## 1 May 2026, 11:48 PM · @Ayush
@@ -332,3 +335,28 @@ The model ran successfully on my local GPU, but some changes may be needed in th
 *   **Tiered Benchmarking**: Expand the smoke test to a 3-level difficulty suite (Level 1, 2, and 3) to thoroughly stress-test the model's CUDA-to-HIP conversion accuracy across different architectural complexities.
 
 ---
+## 6 May 2026, 02:00 AM · @Ankan
+
+---
+
+## 6 May 2026, 01:36 PM · @Ankan
+
+### 🚀 Gemma 4 31B-MoE Training & Benchmarking
+
+| Category | Details |
+| :--- | :--- |
+| **Model** | Gemma 4 31B-MoE |
+| **Datasets** | 1. Cass (63k data points) <br> 2. GLM-5 Distil (500, ROCm converted) |
+| **Training Time** | 18 hours on MI300X (1-Epoch) |
+| **Hyperparameters** | Rank: 16, Alpha: 16, Precision: BF16 |
+| **Status** | ✅ 1-Epoch Training Completion |
+| **Reference** | See `train.py` for full configuration |
+
+### 📊 Progress & Roadmap
+- [x] Basic benchmark completed
+- [ ] 1-bit conversion of the full model
+- [ ] Full benchmark: Base vs. Fine-tuned
+- [ ] 1-bit benchmark: Base vs. Fine-tuned vs. Fine-tuned (1-bit)
+
+
+
