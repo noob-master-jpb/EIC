@@ -374,3 +374,19 @@ The model ran successfully on my local GPU, but some changes may be needed in th
    - **Throughput**: Verified 13-21 TPS performance on Gemma 4 31B, proving the model is production-ready for the MI300X.
 
 ---
+
+## 7 May 2026, 11:11 PM · @Ayush
+
+### Native Library Compatibility & VRAM Transparency
+1. **Benchmark Suite V3.0 (Library Samples)**:
+   - **NVIDIA Library Samples**: Integrated complex math library examples (**cuBLAS, cuFFT, and cuRAND**) from the official NVIDIA Library Samples repository.
+   - **Native Compatibility Validation**: The benchmark now explicitly tests the model's ability to "transpile" library-specific headers and API calls (e.g., `cublasCreate` to `rocblas_create_handle`).
+2. **Batching Performance**:
+   - Increased **Batch Size to 5**, simultaneously processing the smoke test, shared memory reduction, and three distinct math library kernels to stress-test the MI300X parallel throughput.
+3. **VRAM Footprint Transparency**:
+   - Updated telemetry to report **Total VRAM Footprint**: Static Model Weights (~62 GB) + Dynamic Inference Overhead (~2-5 GB). 
+   - Clarified that the Gemma 4 31B model utilizes approximately **64-67 GB** total on the MI300X, refuting the "2.14GB impossible" skepticism by distinguishing weights from overhead.
+4. **Architectural Intent**:
+   - Refined the "Thinking Mode" prompts to prioritize AMD CDNA Wavefront 64 awareness, ensuring the model identifies NVIDIA Warp 32 hardcoding as a bug during conversion.
+
+---
