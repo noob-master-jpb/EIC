@@ -1,0 +1,50 @@
+{
+  "smoke_instruction": "Task: The kernel below has a correctness bug that only manifests at runtime under specific launch configurations. Port it to HIP targeting AMD CDNA architecture, and fix all bugs. Do not add comments explaining what you changed.",
+  "prompts": [
+    {
+      "label": "WARP MATRIX MULTIPLY-ACCUMULATE (WMMA / Tensor Cores)",
+      "use_smoke_instruction": false,
+      "code": "using namespace nvcuda;\n\n__global__ void wmma_gemm_kernel(\n    half* A, half* B, float* C,\n    int M, int N, int K)\n{\n    const int WMMA_M = 16, WMMA_N = 16, WMMA_K = 16;\n\n    int warpM = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize;\n    int warpN = (blockIdx.y * blockDim.y + threadIdx.y);\n\n    wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> a_frag;\n    wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::col_major> b_frag;\n    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> acc_frag;\n\n    wmma::fill_fragment(acc_frag, 0.0f);\n\n    for (int i = 0; i < K; i += WMMA_K) {\n        int aRow = warpM * WMMA_M, aCol = i;\n        int bRow = i,              bCol = warpN * WMMA_N;\n\n        if (aRow < M && aCol < K && bRow < K && bCol < N) {\n            wmma::load_matrix_sync(a_frag, A + aRow * K + aCol, K);\n            wmma::load_matrix_sync(b_frag, B + bRow * N + bCol, N);\n            wmma::mma_sync(acc_frag, a_frag, b_frag, acc_frag);\n        }\n    }\n\n    int cRow = warpM * WMMA_M, cCol = warpN * WMMA_N;\n    if (cRow < M && cCol < N)\n        wmma::store_matrix_sync(C + cRow * N + cCol, acc_frag, N, wmma::mem_row_major);\n}"
+    },
+    {
+      "label": "COOPERATIVE GROUPS -- GRID-LEVEL SYNC",
+      "use_smoke_instruction": false,
+      "code": "__global__ void grid_sync_reduction(float* data, float* result, int N) {\n    cg::grid_group grid = cg::this_grid();\n\n    int idx = blockIdx.x * blockDim.x + threadIdx.x;\n    __shared__ float sdata[256];\n\n    sdata[threadIdx.x] = (idx < N) ? data[idx] : 0.0f;\n    __syncthreads();\n\n    // Local block reduction\n    for (int s = blockDim.x / 2; s > 0; s >>= 1) {\n        if (threadIdx.x < s) sdata[threadIdx.x] += sdata[threadIdx.x + s];\n        __syncthreads();\n    }\n\n    if (threadIdx.x == 0) result[blockIdx.x] = sdata[0];\n\n    // GRID-LEVEL SYNC: all blocks must be alive simultaneously\n    grid.sync();\n\n    // Only thread 0 of block 0 does final reduction\n    if (blockIdx.x == 0 && threadIdx.x == 0) {\n        float total = 0.0f;\n        for (int i = 0; i < gridDim.x; i++) total += result[i];\n        result[0] = total;\n    }\n}"
+    },
+    {
+      "label": "PTX INLINE ASSEMBLY (LDMATRIX + ASYNC COPY)",
+      "use_smoke_instruction": false,
+      "code": "__global__ void ptx_ldmatrix_kernel(half* src, half* dst, int stride) {\n    __shared__ half smem[16 * 16];\n\n    int tid = threadIdx.x;\n    int lane = tid % 32;\n\n    // Async copy from global to shared (cp.async -- Ampere+)\n    uint32_t smem_ptr = __cvta_generic_to_shared(&smem[lane * 16]);\n    uint32_t gmem_ptr = (uint32_t)(uintptr_t)(src + lane * stride);\n\n    asm volatile(\n        \"cp.async.ca.shared.global [%0], [%1], 32;\\n\"\n        :: \"r\"(smem_ptr), \"r\"(gmem_ptr)\n    );\n    asm volatile(\"cp.async.commit_group;\\n\" ::);\n    asm volatile(\"cp.async.wait_group 0;\\n\" ::);\n    __syncthreads();\n\n    // ldmatrix: loads a 16x16 fp16 matrix tile directly into registers\n    uint32_t ra, rb;\n    asm volatile(\n        \"ldmatrix.sync.aligned.m8n8.x2.shared.b16 {%0, %1}, [%2];\\n\"\n        : \"=r\"(ra), \"=r\"(rb)\n        : \"r\"(smem_ptr)\n    );\n\n    // Store results back\n    reinterpret_cast<uint32_t*>(dst)[lane * 2 + 0] = ra;\n    reinterpret_cast<uint32_t*>(dst)[lane * 2 + 1] = rb;\n}"
+    },
+    {
+      "label": "WARP-LEVEL PRIMITIVES: __shfl_sync with non-trivial masks",
+      "use_smoke_instruction": false,
+      "code": "__global__ void masked_warp_scan(float* input, float* output, int N) {\n    int tid = blockIdx.x * blockDim.x + threadIdx.x;\n    int lane = threadIdx.x % 32;\n\n    float val = (tid < N) ? input[tid] : 0.0f;\n\n    // Inclusive prefix sum within warp using masked shuffles\n    // Mask 0xFFFFFFFF = all 32 lanes active\n    #pragma unroll\n    for (int offset = 1; offset < 32; offset <<= 1) {\n        float n = __shfl_up_sync(0xFFFFFFFF, val, offset);\n        if (lane >= offset) val += n;\n    }\n\n    // Butterfly XOR shuffle across specific lane subsets (mask tricks)\n    unsigned int mask = __ballot_sync(0xFFFFFFFF, val > 0.0f);\n    float peer = __shfl_xor_sync(mask, val, 16);  // Cross-half-warp\n    val = (lane < 16) ? fminf(val, peer) : fmaxf(val, peer);\n\n    if (tid < N) output[tid] = val;\n}"
+    },
+    {
+      "label": "DYNAMIC PARALLELISM (CHILD KERNEL LAUNCH FROM GPU)",
+      "use_smoke_instruction": false,
+      "code": "__global__ void child_kernel(float* data, int start, int len, float scale) {\n    int idx = start + blockIdx.x * blockDim.x + threadIdx.x;\n    if (idx < start + len) data[idx] *= scale;\n}\n\n__global__ void dynamic_parallelism_kernel(float* data, int N, float threshold) {\n    int idx = blockIdx.x * blockDim.x + threadIdx.x;\n    if (idx >= N) return;\n\n    // Each block decides independently whether to launch child work\n    __shared__ int launch_flag;\n    if (threadIdx.x == 0) launch_flag = (data[blockIdx.x * blockDim.x] > threshold) ? 1 : 0;\n    __syncthreads();\n\n    if (launch_flag && threadIdx.x == 0) {\n        int chunk = blockDim.x;\n        int start = blockIdx.x * chunk;\n        // CHILD KERNEL launched from within a kernel -- CDP\n        child_kernel<<<1, chunk>>>(data, start, chunk, 2.0f);\n        cudaDeviceSynchronize();  // Wait for child to finish\n    }\n}"
+    },
+    {
+      "label": "PERSISTENT THREADS + CLOCK-BASED SPIN WAIT",
+      "use_smoke_instruction": false,
+      "code": "__global__ void persistent_producer_consumer(\n    volatile int* work_queue,\n    volatile int* done_flags,\n    float* data,\n    int num_tasks,\n    int spin_cycles)\n{\n    int tid = blockIdx.x * blockDim.x + threadIdx.x;\n\n    while (true) {\n        // Spin-poll for a task slot (timed spin using GPU clock)\n        int task = -1;\n        long long start = __clock64();\n\n        while (task < 0) {\n            // Try to atomically grab a task\n            for (int i = 0; i < num_tasks; i++) {\n                if (atomicCAS((int*)&done_flags[i], 0, 1) == 0) {\n                    task = i;\n                    break;\n                }\n            }\n            // Bail if we've spun for too long (clock-based timeout)\n            if ((__clock64() - start) > spin_cycles) break;\n        }\n\n        if (task < 0) break;\n\n        // Do the work\n        data[task * blockDim.x + threadIdx.x] *= 1.5f;\n        __threadfence();\n        done_flags[task] = 2;  // Mark complete\n    }\n}"
+    },
+    {
+      "label": "TEXTURE OBJECTS WITH LAYERED 2D ARRAYS",
+      "use_smoke_instruction": false,
+      "code": "__global__ void layered_texture_sample(\n    cudaTextureObject_t tex,\n    float* output,\n    int width, int height, int num_layers)\n{\n    int x = blockIdx.x * blockDim.x + threadIdx.x;\n    int y = blockIdx.y * blockDim.y + threadIdx.y;\n    int layer = blockIdx.z;\n\n    if (x >= width || y >= height || layer >= num_layers) return;\n\n    // Normalized coordinates with layer index\n    float u = (x + 0.5f) / width;\n    float v = (y + 0.5f) / height;\n\n    // tex2DLayered: samples a specific layer with bilinear filtering\n    float val = tex2DLayered<float>(tex, u, v, layer);\n\n    // Mix with neighbor layers using texture fetch\n    float val_prev = (layer > 0)             ? tex2DLayered<float>(tex, u, v, layer - 1) : val;\n    float val_next = (layer < num_layers - 1) ? tex2DLayered<float>(tex, u, v, layer + 1) : val;\n\n    output[layer * width * height + y * width + x] = 0.25f * val_prev + 0.5f * val + 0.25f * val_next;\n}"
+    },
+    {
+      "label": "NANOSLEEP + MEMORY ORDERING WITH ACQUIRE/RELEASE FENCES",
+      "use_smoke_instruction": false,
+      "code": "__global__ void nanosleep_sync_kernel(\n    volatile int* lock,\n    float* shared_buffer,\n    float* output,\n    int N)\n{\n    int tid = blockIdx.x * blockDim.x + threadIdx.x;\n\n    // Spin-lock with nanosleep backoff (reduces memory traffic)\n    if (threadIdx.x == 0) {\n        int backoff = 8;\n        while (atomicCAS((int*)lock, 0, 1) != 0) {\n            __nanosleep(backoff);  // NVIDIA-only: sleep this thread N nanoseconds\n            backoff = min(backoff * 2, 256);  // Exponential backoff\n        }\n    }\n    __syncthreads();\n\n    // Critical section -- modify shared buffer\n    if (tid < N) shared_buffer[threadIdx.x] += 1.0f;\n\n    // Acquire/release fence to ensure ordering\n    __threadfence();  // Full device-level memory fence\n\n    __syncthreads();\n    if (threadIdx.x == 0) {\n        atomicExch((int*)lock, 0);  // Release lock\n    }\n\n    if (tid < N) output[tid] = shared_buffer[threadIdx.x];\n}"
+    },
+    {
+      "label": "MULTI-CAST MEMORY + NVLink PEER ACCESS (MULTI-GPU)",
+      "use_smoke_instruction": false,
+      "code": "__global__ void nvlink_peer_atomic_kernel(\n    float* local_data,\n    float* peer_data,     // Pointer into another GPU's memory via NVLink\n    float* accumulator,   // Unified Memory buffer\n    int N)\n{\n    int idx = blockIdx.x * blockDim.x + threadIdx.x;\n    if (idx >= N) return;\n\n    float local_val = local_data[idx];\n\n    // Cross-device atomic into peer GPU memory over NVLink\n    // This requires cudaDeviceEnablePeerAccess() on both devices\n    atomicAdd(&peer_data[idx], local_val);  // NVLink peer atomic\n\n    // Fence to ensure peer write is visible\n    __threadfence_system();  // System-level fence (across all GPUs + CPU)\n\n    // Write into Unified Memory (triggers UVM page migration on NVIDIA)\n    atomicAdd(&accumulator[idx % 1024], local_val * 0.5f);\n}"
+    }
+  ]
+}
