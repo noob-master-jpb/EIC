@@ -1,0 +1,375 @@
+// ============================================================
+// 9 CUDA Kernels Difficult to Translate to ROCm/HIP
+// Each one exploits something HIP either doesn't support,
+// emulates poorly, or behaves differently on AMD hardware.
+// ============================================================
+
+#include <cuda_runtime.h>
+#include <cooperative_groups.h>
+#include <cuda_fp16.h>
+#include <mma.h>  // Tensor Core (wmma) intrinsics
+
+namespace cg = cooperative_groups;
+
+// ─────────────────────────────────────────────────────────────
+// 1. WARP MATRIX MULTIPLY-ACCUMULATE (WMMA / Tensor Cores)
+//
+// WHY HARD: Uses nvcuda::wmma which maps to NVIDIA Tensor Cores.
+// ROCm has rocwmma, but the tile sizes, fragment layouts, and
+// sync semantics differ. D_type and accumulator precision
+// handling is not 1:1. Code often silently compiles but gives
+// wrong results or falls back to non-Tensor-Core paths.
+// ─────────────────────────────────────────────────────────────
+using namespace nvcuda;
+
+__global__ void wmma_gemm_kernel(
+    half* A, half* B, float* C,
+    int M, int N, int K)
+{
+    const int WMMA_M = 16, WMMA_N = 16, WMMA_K = 16;
+
+    int warpM = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize;
+    int warpN = (blockIdx.y * blockDim.y + threadIdx.y);
+
+    wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> a_frag;
+    wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::col_major> b_frag;
+    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> acc_frag;
+
+    wmma::fill_fragment(acc_frag, 0.0f);
+
+    for (int i = 0; i < K; i += WMMA_K) {
+        int aRow = warpM * WMMA_M, aCol = i;
+        int bRow = i,              bCol = warpN * WMMA_N;
+
+        if (aRow < M && aCol < K && bRow < K && bCol < N) {
+            wmma::load_matrix_sync(a_frag, A + aRow * K + aCol, K);
+            wmma::load_matrix_sync(b_frag, B + bRow * N + bCol, N);
+            wmma::mma_sync(acc_frag, a_frag, b_frag, acc_frag);
+        }
+    }
+
+    int cRow = warpM * WMMA_M, cCol = warpN * WMMA_N;
+    if (cRow < M && cCol < N)
+        wmma::store_matrix_sync(C + cRow * N + cCol, acc_frag, N, wmma::mem_row_major);
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// 2. COOPERATIVE GROUPS -- GRID-LEVEL SYNC
+//
+// WHY HARD: grid.sync() requires the kernel to be launched
+// with cudaLaunchCooperativeKernel(). HIP supports
+// cooperative_groups partially, but grid-level sync on AMD
+// requires all CTAs to be resident simultaneously, which
+// imposes hard occupancy constraints. Many AMD cards silently
+// deadlock or require explicit CGS workarounds.
+// ─────────────────────────────────────────────────────────────
+__global__ void grid_sync_reduction(float* data, float* result, int N) {
+    cg::grid_group grid = cg::this_grid();
+
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    __shared__ float sdata[256];
+
+    sdata[threadIdx.x] = (idx < N) ? data[idx] : 0.0f;
+    __syncthreads();
+
+    // Local block reduction
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (threadIdx.x < s) sdata[threadIdx.x] += sdata[threadIdx.x + s];
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0) result[blockIdx.x] = sdata[0];
+
+    // GRID-LEVEL SYNC: all blocks must be alive simultaneously
+    grid.sync();
+
+    // Only thread 0 of block 0 does final reduction
+    if (blockIdx.x == 0 && threadIdx.x == 0) {
+        float total = 0.0f;
+        for (int i = 0; i < gridDim.x; i++) total += result[i];
+        result[0] = total;
+    }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// 3. PTX INLINE ASSEMBLY (LDMATRIX + ASYNC COPY)
+//
+// WHY HARD: Inline PTX is NVIDIA-specific ISA. ROCm uses GCN/CDNA
+// assembly (AMDGPU ISA). There is no HIP equivalent for
+// ldmatrix, cp.async, or commit_group. You'd have to rewrite
+// from scratch using ds_read / buffer_load intrinsics or
+// __builtin_amdgcn_* which is entirely different.
+// ─────────────────────────────────────────────────────────────
+__global__ void ptx_ldmatrix_kernel(half* src, half* dst, int stride) {
+    __shared__ half smem[16 * 16];
+
+    int tid = threadIdx.x;
+    int lane = tid % 32;
+
+    // Async copy from global to shared (cp.async -- Ampere+)
+    uint32_t smem_ptr = __cvta_generic_to_shared(&smem[lane * 16]);
+    uint32_t gmem_ptr = (uint32_t)(uintptr_t)(src + lane * stride);
+
+    asm volatile(
+        "cp.async.ca.shared.global [%0], [%1], 32;\n"
+        :: "r"(smem_ptr), "r"(gmem_ptr)
+    );
+    asm volatile("cp.async.commit_group;\n" ::);
+    asm volatile("cp.async.wait_group 0;\n" ::);
+    __syncthreads();
+
+    // ldmatrix: loads a 16x16 fp16 matrix tile directly into registers
+    uint32_t ra, rb;
+    asm volatile(
+        "ldmatrix.sync.aligned.m8n8.x2.shared.b16 {%0, %1}, [%2];\n"
+        : "=r"(ra), "=r"(rb)
+        : "r"(smem_ptr)
+    );
+
+    // Store results back
+    reinterpret_cast<uint32_t*>(dst)[lane * 2 + 0] = ra;
+    reinterpret_cast<uint32_t*>(dst)[lane * 2 + 1] = rb;
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// 4. WARP-LEVEL PRIMITIVES: __shfl_sync with non-trivial masks
+//
+// WHY HARD: CUDA's __shfl_sync takes an explicit 32-bit lane mask.
+// HIP's __shfl has no mask parameter at all -- it syncs all 64
+// lanes (AMD wavefront = 64 threads, not 32). Masks that encode
+// subwarp communication patterns break entirely. Stride and
+// offset behavior differs for wavefront-64 hardware.
+// ─────────────────────────────────────────────────────────────
+__global__ void masked_warp_scan(float* input, float* output, int N) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int lane = threadIdx.x % 32;
+
+    float val = (tid < N) ? input[tid] : 0.0f;
+
+    // Inclusive prefix sum within warp using masked shuffles
+    // Mask 0xFFFFFFFF = all 32 lanes active
+    #pragma unroll
+    for (int offset = 1; offset < 32; offset <<= 1) {
+        float n = __shfl_up_sync(0xFFFFFFFF, val, offset);
+        if (lane >= offset) val += n;
+    }
+
+    // Butterfly XOR shuffle across specific lane subsets (mask tricks)
+    unsigned int mask = __ballot_sync(0xFFFFFFFF, val > 0.0f);
+    float peer = __shfl_xor_sync(mask, val, 16);  // Cross-half-warp
+    val = (lane < 16) ? fminf(val, peer) : fmaxf(val, peer);
+
+    if (tid < N) output[tid] = val;
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// 5. DYNAMIC PARALLELISM (CHILD KERNEL LAUNCH FROM GPU)
+//
+// WHY HARD: CUDA Dynamic Parallelism (CDP) lets a kernel launch
+// child kernels. HIP technically supports this but it is
+// buggy on many AMD cards, has different stream semantics,
+// and the parent-child synchronization model doesn't map
+// cleanly. Recursive kernels are almost guaranteed to break.
+// ─────────────────────────────────────────────────────────────
+__global__ void child_kernel(float* data, int start, int len, float scale) {
+    int idx = start + blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < start + len) data[idx] *= scale;
+}
+
+__global__ void dynamic_parallelism_kernel(float* data, int N, float threshold) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= N) return;
+
+    // Each block decides independently whether to launch child work
+    __shared__ int launch_flag;
+    if (threadIdx.x == 0) launch_flag = (data[blockIdx.x * blockDim.x] > threshold) ? 1 : 0;
+    __syncthreads();
+
+    if (launch_flag && threadIdx.x == 0) {
+        int chunk = blockDim.x;
+        int start = blockIdx.x * chunk;
+        // CHILD KERNEL launched from within a kernel -- CDP
+        child_kernel<<<1, chunk>>>(data, start, chunk, 2.0f);
+        cudaDeviceSynchronize();  // Wait for child to finish
+    }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// 6. PERSISTENT THREADS + CLOCK-BASED SPIN WAIT
+//
+// WHY HARD: Uses __clock64() for cycle-accurate spin-waiting.
+// AMD's __clock() returns a different clock domain (shader clock
+// vs memory clock vs system clock depending on the ASIC).
+// The cycle-to-nanosecond ratio is completely different.
+// This pattern is used in real producer-consumer persistent kernels.
+// ─────────────────────────────────────────────────────────────
+__global__ void persistent_producer_consumer(
+    volatile int* work_queue,
+    volatile int* done_flags,
+    float* data,
+    int num_tasks,
+    int spin_cycles)
+{
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+
+    while (true) {
+        // Spin-poll for a task slot (timed spin using GPU clock)
+        int task = -1;
+        long long start = __clock64();
+
+        while (task < 0) {
+            // Try to atomically grab a task
+            for (int i = 0; i < num_tasks; i++) {
+                if (atomicCAS((int*)&done_flags[i], 0, 1) == 0) {
+                    task = i;
+                    break;
+                }
+            }
+            // Bail if we've spun for too long (clock-based timeout)
+            if ((__clock64() - start) > spin_cycles) break;
+        }
+
+        if (task < 0) break;
+
+        // Do the work
+        data[task * blockDim.x + threadIdx.x] *= 1.5f;
+        __threadfence();
+        done_flags[task] = 2;  // Mark complete
+    }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// 7. TEXTURE OBJECTS WITH LAYERED 2D ARRAYS
+//
+// WHY HARD: CUDA texture objects with layered arrays use
+// cudaCreateTextureObject() with cudaResourceTypeArray and
+// cudaArrayLayered flags. HIP's texture support is incomplete --
+// layered textures, border modes, and normalized coordinate
+// filtering behave differently or are unsupported on some GFX
+// architectures. Hardware texture units differ significantly.
+// ─────────────────────────────────────────────────────────────
+__global__ void layered_texture_sample(
+    cudaTextureObject_t tex,
+    float* output,
+    int width, int height, int num_layers)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    int layer = blockIdx.z;
+
+    if (x >= width || y >= height || layer >= num_layers) return;
+
+    // Normalized coordinates with layer index
+    float u = (x + 0.5f) / width;
+    float v = (y + 0.5f) / height;
+
+    // tex2DLayered: samples a specific layer with bilinear filtering
+    float val = tex2DLayered<float>(tex, u, v, layer);
+
+    // Mix with neighbor layers using texture fetch
+    float val_prev = (layer > 0)             ? tex2DLayered<float>(tex, u, v, layer - 1) : val;
+    float val_next = (layer < num_layers - 1) ? tex2DLayered<float>(tex, u, v, layer + 1) : val;
+
+    output[layer * width * height + y * width + x] = 0.25f * val_prev + 0.5f * val + 0.25f * val_next;
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// 8. NANOSLEEP + MEMORY ORDERING WITH ACQUIRE/RELEASE FENCES
+//
+// WHY HARD: __nanosleep() is an Ampere+ CUDA intrinsic with no
+// direct HIP equivalent. AMD has s_sleep but it takes
+// "cycles", not nanoseconds, and the granularity is coarser.
+// The __threadfence() / memory order semantics also differ
+// at the hardware level (NVIDIA uses L2 invalidation,
+// AMD uses different cache coherence protocol).
+// ─────────────────────────────────────────────────────────────
+__global__ void nanosleep_sync_kernel(
+    volatile int* lock,
+    float* shared_buffer,
+    float* output,
+    int N)
+{
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // Spin-lock with nanosleep backoff (reduces memory traffic)
+    if (threadIdx.x == 0) {
+        int backoff = 8;
+        while (atomicCAS((int*)lock, 0, 1) != 0) {
+            __nanosleep(backoff);  // NVIDIA-only: sleep this thread N nanoseconds
+            backoff = min(backoff * 2, 256);  // Exponential backoff
+        }
+    }
+    __syncthreads();
+
+    // Critical section -- modify shared buffer
+    if (tid < N) shared_buffer[threadIdx.x] += 1.0f;
+
+    // Acquire/release fence to ensure ordering
+    __threadfence();  // Full device-level memory fence
+
+    __syncthreads();
+    if (threadIdx.x == 0) {
+        atomicExch((int*)lock, 0);  // Release lock
+    }
+
+    if (tid < N) output[tid] = shared_buffer[threadIdx.x];
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// 9. MULTI-CAST MEMORY + NVLink PEER ACCESS (MULTI-GPU)
+//
+// WHY HARD: Uses cudaMemAdvise with UM hints, NVLink peer-to-peer
+// atomics, and device-to-device memcpy inside the kernel.
+// ROCm has its own XGMI/Infinity Fabric for multi-GPU but
+// the UVM migration hints, prefetch hints, and peer atomic
+// support are not equivalent. atomicAdd across PCIe on AMD
+// has very different performance characteristics and
+// cudaMemcpyPeer semantics don't translate cleanly.
+// ─────────────────────────────────────────────────────────────
+__global__ void nvlink_peer_atomic_kernel(
+    float* local_data,
+    float* peer_data,     // Pointer into another GPU's memory via NVLink
+    float* accumulator,   // Unified Memory buffer
+    int N)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= N) return;
+
+    float local_val = local_data[idx];
+
+    // Cross-device atomic into peer GPU memory over NVLink
+    // This requires cudaDeviceEnablePeerAccess() on both devices
+    atomicAdd(&peer_data[idx], local_val);  // NVLink peer atomic
+
+    // Fence to ensure peer write is visible
+    __threadfence_system();  // System-level fence (across all GPUs + CPU)
+
+    // Write into Unified Memory (triggers UVM page migration on NVIDIA)
+    atomicAdd(&accumulator[idx % 1024], local_val * 0.5f);
+}
+
+
+// ─────────────────────────────────────────────────────────────
+//  LAUNCH HELPERS (for reference, not runnable as-is)
+// ─────────────────────────────────────────────────────────────
+
+void launch_cooperative(float* data, float* result, int N) {
+    void* args[] = { &data, &result, &N };
+    int blockSize = 256;
+    int gridSize = (N + blockSize - 1) / blockSize;
+
+    // Kernel 2 must be launched via cooperative API, not <<<>>>
+    cudaLaunchCooperativeKernel(
+        (void*)grid_sync_reduction,
+        dim3(gridSize), dim3(blockSize),
+        args
+    );
+}
