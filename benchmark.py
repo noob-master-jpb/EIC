@@ -33,8 +33,8 @@ atexit.register(_logger.close)
 CONFIG = {
     "model_path":    "/root/EIC/gemma-4-31B-it-finetuned",
     "prompts_file":  "/root/EIC/prompts.json",
-    "max_seq_length": 4096,
-    "max_new_tokens": 1024,
+    "max_seq_length": 8192,
+    "max_new_tokens": 2048,
     "temperature":    0.7,
     "top_p":          0.9,
     "output_file":   "benchmark_output.txt",
@@ -147,17 +147,10 @@ def run_benchmark(model_name, inputs, description):
     print(f"Inference Overhead: {inference_overhead_gb:.2f} GB (The dynamic 'Spike' for KV Cache)")
     print(f"Total Peak VRAM:    {total_peak_gb:.2f} GB (What you see in rocm-smi)\n")
 
-    # Decode full outputs for all prompts using per-sequence actual input length
-    task_labels = [
-        "Warp Shuffle + CDNA Bug Fix",
-        "NVIDIA Reduction Template",
-        "cuBLAS Native Compatibility",
-        "cuFFT Native Compatibility",
-        "cuRAND Native Compatibility",
-    ]
+    # Decode full outputs using the globally loaded task_labels (auto-scales to any JSON)
     for idx, label in enumerate(task_labels):
         seq_input_len = actual_input_lens[idx].item()
-        print(f"--- Full Output [{idx+1}/{batch_size}]: {label} ---")
+        print(f"--- Output [{idx+1}/{batch_size}]: {label} ---")
         print(tokenizer.decode(outputs[idx][seq_input_len:], skip_special_tokens=True).strip())
         print()
 
