@@ -22,7 +22,6 @@ KEEP_RATIO = {
     "o_proj": 0.03, "up_proj": 0.02, "down_proj": 0.02, "gate_proj": 0.02,
     "default": 0.02
 }
-RESIDUAL_STEPS             = 1
 EPSILON                    = 1e-8
 SEQ_LEN                    = 512
 N_CALIBRATION_SAMPLES      = 128
@@ -34,12 +33,6 @@ OUTPUT_DIR                 = "qwen3.5-0.8B-billm"
 VRAM_OVERHEAD_RESERVE_GB   = 0.5
 # Cap perplexity eval tokens; None = no cap (full test set)
 MAX_EVAL_TOKENS            = 1024
-
-# toggles
-USE_SENSITIVITY_SCHEDULING = False
-USE_DYNAMIC_KEEP_RATIO     = False
-USE_CLIP_SEARCH            = False
-USE_BLOCK_NORMALIZATION    = False
 
 FORCE_CPU                  = os.environ.get("FORCE_CPU", "False").lower() == "true"
 CPU_THREADS                = int(os.environ.get("CPU_THREADS")) if os.environ.get("CPU_THREADS") else None
@@ -131,70 +124,80 @@ def _is_oom(exc):
 # CORE  (BiLLM principle)
 # =========================
 
-def compute_saliency(w, h):
-    return (w ** 2) / (h.unsqueeze(0) + EPSILON)
-
-
-def apply_mask(saliency, keep_ratio):
-    flat = saliency.view(-1)
-    k = max(1, int(flat.numel() * keep_ratio))
-    mask = torch.zeros_like(flat, dtype=torch.bool)
-    idx = torch.topk(flat, k).indices
-    mask[idx] = True
-    return mask.view_as(saliency)
-
-
-def compute_alpha(w):
-    return w.abs().mean(dim=1, keepdim=True)
-
-
-def clip_if_enabled(w):
-    if not USE_CLIP_SEARCH:
-        return w
-
-    w_abs = w.abs()
-    base = torch.quantile(w_abs, 0.99)
-    cands = base * torch.tensor([0.8, 1.0, 1.2], device=w.device)
-
-    errs = []
-    for c in cands:
-        w_c = torch.clamp(w, -c, c)
-        alpha = w_c.abs().mean()
-        b = alpha * torch.sign(w_c)
-        errs.append(torch.norm(w - b))
-
-    best = cands[torch.argmin(torch.stack(errs))]
-    return torch.clamp(w, -best, best)
-
-
-def billm_binarize(w, mask):
-    w = clip_if_enabled(w)
-
-    alpha = compute_alpha(w)
-    sign = torch.sign(w)
-
-    b = w.clone()
-    rows, cols = torch.where(~mask)
-    b[rows, cols] = alpha[rows, 0] * sign[rows, cols]
-
-    return b
-
-
-def apply_residual(w, b, mask):
-    global RESIDUAL_STEPS
-    for _ in range(RESIDUAL_STEPS):
-        r = (w - b) * (~mask)
-
-        alpha = compute_alpha(r)
-        sign = torch.sign(r)
-
-        rows, cols = torch.where(~mask)
-        update = torch.zeros_like(w)
-        update[rows, cols] = alpha[rows, 0] * sign[rows, cols]
-
-        b = b + update
-
-    return b
+def billm_quantize_block(Wb, C_diag_b, keep_ratio):
+    """
+    True BiLLM block binarization:
+    1. Structural (column) salient selection
+    2. Binary Residual Approximation for salient
+    3. Bell-shaped splitting for non-salient
+    """
+    # Saliency = w_i^2 / [H^-1]_ii^2
+    saliency = Wb ** 2 / (C_diag_b.unsqueeze(0) ** 2 + EPSILON)
+    col_saliency = saliency.sum(dim=0)
+    
+    n_cols = Wb.shape[1]
+    k = max(1, int(n_cols * keep_ratio))
+    
+    if k >= n_cols:
+        salient_cols = torch.arange(n_cols, device=Wb.device)
+        non_salient_cols = torch.tensor([], dtype=torch.long, device=Wb.device)
+    else:
+        salient_cols = torch.topk(col_saliency, k).indices
+        non_salient_mask = torch.ones(n_cols, dtype=torch.bool, device=Wb.device)
+        non_salient_mask[salient_cols] = False
+        non_salient_cols = torch.where(non_salient_mask)[0]
+        
+    Qb = torch.zeros_like(Wb)
+    
+    # 1. Salient Weights: Binary Residual Approximation
+    if len(salient_cols) > 0:
+        W_sal = Wb[:, salient_cols]
+        alpha_o = W_sal.abs().mean(dim=1, keepdim=True)
+        B_o = torch.sign(W_sal)
+        Residual = W_sal - alpha_o * B_o
+        
+        alpha_r = Residual.abs().mean(dim=1, keepdim=True)
+        B_r = torch.sign(Residual)
+        
+        Qb[:, salient_cols] = alpha_o * B_o + alpha_r * B_r
+        
+    # 2. Non-Salient Weights: Bell-shaped Splitting Search
+    if len(non_salient_cols) > 0:
+        W_uns = Wb[:, non_salient_cols]
+        W_uns_abs = W_uns.abs()
+        
+        best_p = 0
+        best_err = float('inf')
+        best_Qb_uns = torch.zeros_like(W_uns)
+        
+        percentiles = torch.linspace(0.1, 0.9, 9).to(Wb.device)
+        p_cands = torch.quantile(W_uns_abs, percentiles)
+        
+        for p in p_cands:
+            mask_c = W_uns_abs <= p
+            mask_s = ~mask_c
+            
+            sum_c = (W_uns_abs * mask_c).sum(dim=1, keepdim=True)
+            count_c = mask_c.sum(dim=1, keepdim=True).clamp(min=1)
+            alpha_c = sum_c / count_c
+            
+            sum_s = (W_uns_abs * mask_s).sum(dim=1, keepdim=True)
+            count_s = mask_s.sum(dim=1, keepdim=True).clamp(min=1)
+            alpha_s = sum_s / count_s
+            
+            B_c = torch.sign(W_uns) * mask_c
+            B_s = torch.sign(W_uns) * mask_s
+            
+            Q_uns = alpha_c * B_c + alpha_s * B_s
+            err = torch.norm(W_uns - Q_uns)**2
+            
+            if err < best_err:
+                best_err = err
+                best_Qb_uns = Q_uns
+                
+        Qb[:, non_salient_cols] = best_Qb_uns
+        
+    return Qb
 
 
 # =========================
@@ -229,7 +232,8 @@ def _run_calibration_on_device(model, samples, device):
             x = inp[0].detach()
             if x.dim() == 3:
                 x = x.reshape(-1, x.shape[-1])
-            h = torch.mean(x.float() ** 2, dim=0).cpu() + EPSILON
+            # BiLLM / GPTQ uses full Hessian: H = X^T X / N
+            h = (torch.matmul(x.float().t(), x.float()) / x.shape[0]).cpu()
             del x
             if name not in hess:
                 hess[name] = h
@@ -315,56 +319,55 @@ def get_keep_ratio(name):
 @torch.no_grad()
 def quantize(model, hessians):
     modules = dict(model.named_modules())
-
-    if USE_SENSITIVITY_SCHEDULING:
-        sensitivities = {}
-        for name, m in modules.items():
-            if isinstance(m, nn.Linear) and name in hessians:
-                w = m.weight.data
-                h = hessians[name].to(w.device)
-                sensitivities[name] = ((w**2)/(h+EPSILON)).mean().item()
-        layer_order = sorted(sensitivities, key=lambda x: sensitivities[x])
-    else:
-        layer_order = [n for n, m in modules.items() if isinstance(m, nn.Linear)]
-
-    accumulated_error = 0.0
+    layer_order = [n for n, m in modules.items() if isinstance(m, nn.Linear)]
 
     for name in tqdm(layer_order, desc="Quantizing layers"):
         if name not in hessians:
             continue
 
         m = modules[name]
-        w = m.weight.data.cpu()
-        h = hessians[name]
-
+        W = m.weight.data.clone().float()
+        H = hessians[name].to(W.device).float()
+        
+        # GPTQ-style damping
+        damp = 0.01
+        diag = torch.diag(H)
+        H[torch.arange(H.shape[0]), torch.arange(H.shape[0])] += damp * diag.mean()
+        
+        try:
+            H_inv = torch.linalg.inv(H)
+            U = torch.linalg.cholesky(H_inv, upper=True)
+        except RuntimeError:
+            print(f"[{name}] Cholesky failed, adding extra damping...")
+            H[torch.arange(H.shape[0]), torch.arange(H.shape[0])] += 0.05 * diag.mean()
+            H_inv = torch.linalg.inv(H)
+            U = torch.linalg.cholesky(H_inv, upper=True)
+            
+        C_diag = torch.diag(H_inv)
+        U_diag = torch.diag(U)
+        
         keep_ratio = get_keep_ratio(name)
-
-        if USE_DYNAMIC_KEEP_RATIO:
-            keep_ratio = min(
-                keep_ratio * (1 + min(0.3, accumulated_error * 0.5)),
-                keep_ratio * 2
-            )
-
-        saliency = compute_saliency(w, h)
-        mask = apply_mask(saliency, keep_ratio)
-
-        b = billm_binarize(w, mask)
-        b = apply_residual(w, b, mask)
-
-        if USE_BLOCK_NORMALIZATION:
-            ratio = w.norm() / (b.norm() + EPSILON)
-            ratio = torch.clamp(ratio, 0.85, 1.2)
-            b *= ratio
-
-        m.weight.data.copy_(b)
-
-        err = torch.norm(w - b) / (torch.norm(w) + EPSILON)
-        accumulated_error += err.item()
-
-        # Free intermediate tensors immediately to reduce peak RAM
-        del w, saliency, mask, b
-
-        print(f"{name} | err={err:.4f} | keep={keep_ratio:.4f}")
+        block_size = 128
+        in_features = W.shape[1]
+        
+        for i1 in range(0, in_features, block_size):
+            i2 = min(i1 + block_size, in_features)
+            
+            Wb = W[:, i1:i2]
+            C_diag_b = C_diag[i1:i2]
+            
+            Qb = billm_quantize_block(Wb, C_diag_b, keep_ratio)
+            
+            # Update quantized weights
+            m.weight.data[:, i1:i2] = Qb.to(m.weight.data.dtype)
+            
+            # Block-wise OBC error update
+            Err = (Wb - Qb) / U_diag[i1:i2].unsqueeze(0)
+            if i2 < in_features:
+                W[:, i2:] -= Err.matmul(U[i1:i2, i2:])
+                
+        del H, H_inv, U, W
+        print(f"{name} | keep={keep_ratio:.4f}")
 
 
 # =========================
@@ -471,69 +474,12 @@ class TestCoreMath(unittest.TestCase):
 
     def setUp(self):
         torch.manual_seed(0)
-        self.w = torch.randn(64, 128)
-        self.h = torch.rand(128).abs() + EPSILON
+        self.Wb = torch.randn(64, 128)
+        self.C_diag_b = torch.rand(128).abs() + EPSILON
 
-    def test_saliency_shape(self):
-        s = compute_saliency(self.w, self.h)
-        self.assertEqual(s.shape, self.w.shape)
-
-    def test_saliency_nonnegative(self):
-        s = compute_saliency(self.w, self.h)
-        self.assertTrue((s >= 0).all())
-
-    def test_mask_keep_ratio(self):
-        s = compute_saliency(self.w, self.h)
-        mask = apply_mask(s, 0.10)
-        actual = mask.float().mean().item()
-        self.assertAlmostEqual(actual, 0.10, delta=0.02)
-
-    def test_mask_at_least_one(self):
-        s = compute_saliency(self.w, self.h)
-        mask = apply_mask(s, 0.0)
-        self.assertGreaterEqual(mask.sum().item(), 1)
-
-    def test_alpha_shape(self):
-        alpha = compute_alpha(self.w)
-        self.assertEqual(alpha.shape, (64, 1))
-
-    def test_alpha_nonneg(self):
-        alpha = compute_alpha(self.w)
-        self.assertTrue((alpha >= 0).all())
-
-    def test_binarize_shape(self):
-        s = compute_saliency(self.w, self.h)
-        mask = apply_mask(s, 0.05)
-        b = billm_binarize(self.w, mask)
-        self.assertEqual(b.shape, self.w.shape)
-
-    def test_binarize_non_salient_are_binary(self):
-        s = compute_saliency(self.w, self.h)
-        mask = apply_mask(s, 0.05)
-        b = billm_binarize(self.w, mask)
-        alpha = compute_alpha(self.w)
-
-        rows, cols = torch.where(~mask)
-        expected = alpha[rows, 0] * torch.sign(self.w[rows, cols])
-        self.assertTrue(
-            torch.allclose(b[rows, cols], expected, atol=1e-6),
-            "Non-salient weights are not correctly binarized"
-        )
-
-    def test_residual_does_not_increase_error(self):
-        s = compute_saliency(self.w, self.h)
-        mask = apply_mask(s, 0.05)
-        b_no_res = billm_binarize(self.w, mask)
-
-        global RESIDUAL_STEPS
-        orig = RESIDUAL_STEPS
-        RESIDUAL_STEPS = 1
-        b_res = apply_residual(self.w, b_no_res.clone(), mask)
-        RESIDUAL_STEPS = orig
-
-        err_pre  = torch.norm(self.w - b_no_res).item()
-        err_post = torch.norm(self.w - b_res).item()
-        self.assertLessEqual(err_post, err_pre + 1e-4)
+    def test_billm_quantize_block_shape(self):
+        Qb = billm_quantize_block(self.Wb, self.C_diag_b, 0.1)
+        self.assertEqual(Qb.shape, self.Wb.shape)
 
     def test_get_keep_ratio_known_layers(self):
         self.assertAlmostEqual(get_keep_ratio("q_proj"),    0.06)
@@ -593,7 +539,9 @@ def _make_fake_hessians(model):
     hess = {}
     for name, m in model.named_modules():
         if isinstance(m, nn.Linear):
-            hess[name] = torch.rand(m.in_features).abs() + EPSILON
+            H = torch.randn(m.in_features, m.in_features)
+            H = H.t().matmul(H) + torch.eye(m.in_features)
+            hess[name] = H
     return hess
 
 
@@ -605,33 +553,6 @@ class TestEndToEnd(unittest.TestCase):
 
     def test_quantize_runs_without_error(self):
         quantize(self.model, _make_fake_hessians(self.model))
-
-    def test_billm_principle_most_weights_binarized(self):
-        global RESIDUAL_STEPS
-        orig_res = RESIDUAL_STEPS
-        RESIDUAL_STEPS = 0
-        hess = _make_fake_hessians(self.model)
-        orig_weights = {n: m.weight.data.clone() for n, m in self.model.named_modules() if isinstance(m, nn.Linear)}
-        try:
-            quantize(self.model, hess)
-        finally:
-            RESIDUAL_STEPS = orig_res
-
-        for name, m in self.model.named_modules():
-            if not isinstance(m, nn.Linear): continue
-            w = m.weight.data
-            w_orig = orig_weights[name]
-            h = hess[name]
-            keep_ratio = get_keep_ratio(name)
-            saliency = compute_saliency(w_orig, h)
-            mask = apply_mask(saliency, keep_ratio)
-            for i in range(w.shape[0]):
-                row_w = w[i]
-                row_mask = mask[i]
-                non_salient_abs = row_w[~row_mask].abs()
-                if non_salient_abs.numel() > 0:
-                    alpha = non_salient_abs.mean()
-                    self.assertTrue(torch.allclose(non_salient_abs, alpha, atol=1e-5))
 
 
 class TestHookIsolation(unittest.TestCase):
