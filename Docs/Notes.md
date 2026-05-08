@@ -389,4 +389,22 @@ The model ran successfully on my local GPU, but some changes may be needed in th
 4. **Architectural Intent**:
    - Refined the "Thinking Mode" prompts to prioritize AMD CDNA Wavefront 64 awareness, ensuring the model identifies NVIDIA Warp 32 hardcoding as a bug during conversion.
 
----
+---
+
+## 9 May 2026, 1:00 AM · @Ayush
+
+### Extreme Benchmarking & Hardware Stress Testing
+1. **Benchmark Suite V4.0 (JSON-Driven)**:
+   - **Dynamic Orchestration**: Decoupled prompts from `benchmark.py` into `prompts.json`. The suite now auto-scales its batch size and labeling based on the JSON content.
+   - **Kernel Expansion**: Scaled from 5 to **16 total prompts**, including the "hardest-of-the-hard" CUDA edge cases (PTX assembly, Warp Matrix Multiply, Layered Textures, and NCLL-style collectives).
+2. **Project-Level Stress Test**:
+   - **Multi-File Context**: Integrated a massive **Flash-Attention style SDPA implementation** spread across 4 files (`vec_math.h`, `attention.h`, `attention.cu`, `main.cu`).
+   - **Context Window Testing**: This 3000-token prompt serves as the ultimate test for the model's ability to maintain cross-file coherence and long-range dependency mapping.
+3. **Hardware Saturation**:
+   - **Throughput Stress**: Increased `max_seq_length` to **8192** and `max_new_tokens` to **2048**. 
+   - **VRAM Utilization**: This setup is designed to saturate the MI300X with massive KV-cache overhead, providing a true performance ceiling for production deployment.
+4. **Execution Strategy**:
+   - Total estimated runtime for the full 4-run matrix (Base vs LoRA) is approximately **90 minutes**, producing a high-fidelity audit trail in `benchmark_output.txt`.
+
+---
+
