@@ -2,136 +2,89 @@ from unsloth import FastLanguageModel
 import torch
 import time
 import gc
+import sys
+import json
+import os
+import atexit
 
-model_path = "/root/EIC/gemma-4-31B-it-finetuned"
-max_seq_length = 4096 
+class Logger(object):
+    def __init__(self, filename="benchmark_output.txt"):
+        self.terminal = sys.__stdout__
+        self.log = open(filename, "w")
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+        self.log.flush()
+
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
+
+    def close(self):
+        self.log.close()
+
+_logger = Logger("benchmark_output.txt")
+sys.stdout = _logger
+sys.stderr = _logger  # also capture warnings and tracebacks
+atexit.register(_logger.close)
+
+# --- CONFIG ---
+CONFIG = {
+    "model_path":    "/root/EIC/gemma-4-31B-it-finetuned",
+    "prompts_file":  "/root/EIC/prompts.json",
+    "max_seq_length": 4096,
+    "max_new_tokens": 1024,
+    "temperature":    0.7,
+    "top_p":          0.9,
+    "output_file":   "benchmark_output.txt",
+}
 
 print("Loading model and tokenizer...")
 model, tokenizer = FastLanguageModel.from_pretrained(
-    model_name = model_path,
-    max_seq_length = max_seq_length,
-    dtype = None,
-    load_in_4bit = False, # Full precision for the 192GB MI300X
+    model_name      = CONFIG["model_path"],
+    max_seq_length  = CONFIG["max_seq_length"],
+    dtype           = None,
+    load_in_4bit    = False,  # Full precision for the 192GB MI300X
 )
 FastLanguageModel.for_inference(model)
 
-# --- 1. DATASETS (THE CODE) ---
+# Set padding once globally — left-pad is required for decoder-only batched inference
+tokenizer.padding_side = "left"
+if tokenizer.pad_token is None:
+    tokenizer.pad_token = tokenizer.eos_token
 
-# 1. Smoke Prompt (Warp Shuffle + CDNA Bug)
-smoke_instruction = "Task: The kernel below has a correctness bug that only manifests at runtime under specific launch configurations. Port it to HIP targeting AMD CDNA architecture, and fix all bugs. Do not add comments explaining what you changed."
-smoke_cuda = """
-#include <cooperative_groups.h>
-#include <cuda_runtime.h>
-namespace cg = cooperative_groups;
+# --- 1. LOAD PROMPTS FROM JSON ---
+_prompts_path = CONFIG["prompts_file"]
+if not os.path.exists(_prompts_path):
+    raise FileNotFoundError(f"prompts.json not found at: {_prompts_path}")
 
-__global__ void warp_reduce_kernel(float* d_ptr, float* d_out) {
-    cg::thread_block cta = cg::this_thread_block();
-    cg::thread_block_tile<32> tile = cg::tiled_partition<32>(cta);
-    float val = d_ptr[blockIdx.x * blockDim.x + threadIdx.x];
-    for (int offset = tile.size() / 2; offset > 0; offset /= 2) {
-        val += tile.shfl_down(val, offset);
-    }
-    if (tile.thread_rank() == 0) {
-        d_out[blockIdx.x] = val;
-    }
-}
-"""
+with open(_prompts_path, "r") as f:
+    _prompt_data = json.load(f)
 
-# 2. NVIDIA Reduction Template
-nvidia_reduce = """
-#include <cuda_runtime.h>
-template <unsigned int blockSize>
-__device__ void warpReduce(volatile float *sdata, unsigned int tid) {
-    if (blockSize >= 64) sdata[tid] += sdata[tid + 32];
-    if (blockSize >= 32) sdata[tid] += sdata[tid + 16];
-    if (blockSize >= 16) sdata[tid] += sdata[tid +  8];
-    if (blockSize >=  8) sdata[tid] += sdata[tid +  4];
-    if (blockSize >=  4) sdata[tid] += sdata[tid +  2];
-    if (blockSize >=  2) sdata[tid] += sdata[tid +  1];
-}
+smoke_instruction = _prompt_data["smoke_instruction"]
+prompt_entries    = _prompt_data["prompts"]          # list of {label, use_smoke_instruction, code}
+task_labels       = [p["label"] for p in prompt_entries]
 
-template <unsigned int blockSize>
-__global__ void reduce6(float *g_idata, float *g_odata, unsigned int n) {
-    extern __shared__ float sdata[];
-    unsigned int tid = threadIdx.x;
-    unsigned int i = blockIdx.x*(blockSize*2) + tid;
-    unsigned int gridSize = blockSize*2*gridDim.x;
-    sdata[tid] = 0;
-    while (i < n) { sdata[tid] += g_idata[i] + g_idata[i+blockSize]; i += gridSize; }
-    __syncthreads();
-    if (blockSize >= 512) { if (tid < 256) { sdata[tid] += sdata[tid + 256]; } __syncthreads(); }
-    if (blockSize >= 256) { if (tid < 128) { sdata[tid] += sdata[tid + 128]; } __syncthreads(); }
-    if (blockSize >= 128) { if (tid <  64) { sdata[tid] += sdata[tid +  64]; } __syncthreads(); }
-    if (tid < 32) warpReduce<blockSize>(sdata, tid);
-    if (tid == 0) g_odata[blockIdx.x] = sdata[0];
-}
-"""
-
-# 3. NVIDIA cuBLAS (Native Compatibility Test)
-nvidia_cublas = """
-#include <cublas_v2.h>
-#include <cuda_runtime.h>
-void perform_gemm(float* A, float* B, float* C, int m, int n, int k) {
-    cublasHandle_t handle;
-    cublasCreate(&handle);
-    float alpha = 1.0f;
-    float beta = 0.0f;
-    cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, A, m, B, k, &beta, C, m);
-    cublasDestroy(handle);
-}
-"""
-
-# 4. NVIDIA cuFFT (Native Compatibility Test)
-nvidia_cufft = """
-#include <cufft.h>
-#include <cuda_runtime.h>
-void perform_fft(cufftComplex *d_data, int batch_size) {
-    cufftHandle plan;
-    cufftPlan1d(&plan, 1024, CUFFT_C2C, batch_size);
-    cufftExecC2C(plan, d_data, d_data, CUFFT_FORWARD);
-    cufftDestroy(plan);
-}
-"""
-
-# 5. NVIDIA cuRAND (Native Compatibility Test)
-nvidia_curand = """
-#include <curand.h>
-#include <cuda_runtime.h>
-void generate_random(float *d_data, int size) {
-    curandGenerator_t gen;
-    curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT);
-    curandSetPseudoRandomGeneratorSeed(gen, 1234ULL);
-    curandGenerateUniform(gen, d_data, size);
-    curandDestroyGenerator(gen);
-}
-"""
+print(f"Loaded {len(prompt_entries)} prompts from {_prompts_path}")
+for i, entry in enumerate(prompt_entries):
+    print(f"  [{i+1}] {entry['label']}")
 
 # --- 2. PROMPT BUILDER ---
 def prepare_batch(thinking_enabled=False):
-    prompts = []
-    
     if thinking_enabled:
         base_instruction = "Think step-by-step. Analyze the CUDA memory models, library dependencies, and hardware constraints. Document your reasoning, then output the final ROCm/HIP C++ code with native compatibility."
     else:
         base_instruction = "Directly convert this CUDA code to natively compatible ROCm/HIP. Change all headers and library calls appropriately. Do not provide explanations, output only the C++ code."
 
-    msgs = [
-        f"{base_instruction}\n\n{smoke_instruction}\n\n```cpp\n{smoke_cuda}\n```",
-        f"{base_instruction}\n\n```cpp\n{nvidia_reduce}\n```",
-        f"{base_instruction}\n\n```cpp\n{nvidia_cublas}\n```",
-        f"{base_instruction}\n\n```cpp\n{nvidia_cufft}\n```",
-        f"{base_instruction}\n\n```cpp\n{nvidia_curand}\n```"
-    ]
-
-    for msg in msgs:
-        messages = [{"role": "user", "content": msg}]
+    prompts = []
+    for entry in prompt_entries:
+        extra = f"\n\n{smoke_instruction}" if entry["use_smoke_instruction"] else ""
+        content = f"{base_instruction}{extra}\n\n```cpp\n{entry['code']}\n```"
+        messages = [{"role": "user", "content": content}]
         prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         prompts.append(prompt)
-        
-    tokenizer.padding_side = "left"
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-        
+
     return tokenizer(text=prompts, return_tensors="pt", padding=True).to("cuda")
 
 # --- 3. BENCHMARK ENGINE ---
@@ -144,68 +97,98 @@ def run_benchmark(model_name, inputs, description):
     gc.collect()
     torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats()
-    
+
     start_mem = torch.cuda.memory_allocated()
+
+    # Synchronize before timing so we measure true GPU time, not Python scheduling lag
+    torch.cuda.synchronize()
     start_time = time.time()
-    
-    # Generate batch
-    outputs = model.generate(
-        **inputs, 
-        max_new_tokens=1024,
-        do_sample=True, 
-        temperature=0.7, 
-        top_p=0.9, 
-        use_cache=True,
-        pad_token_id=tokenizer.eos_token_id
-    )
-    
+
+    # Generate batch — wrapped to survive OOM or other runtime failures
+    try:
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens = CONFIG["max_new_tokens"],
+            do_sample      = True,
+            temperature    = CONFIG["temperature"],
+            top_p          = CONFIG["top_p"],
+            use_cache      = True,
+            pad_token_id   = tokenizer.eos_token_id,
+        )
+    except Exception as e:
+        print(f"[ERROR] Generation failed: {e}")
+        return
+
+    torch.cuda.synchronize()
     end_time = time.time()
-    
+
     # Calculate Performance Metrics
     peak_mem = torch.cuda.max_memory_allocated()
-    
-    # Detailed VRAM Breakdown for the Lead
-    base_model_gb = start_mem / (1024**3)
+
+    # Detailed VRAM Breakdown
+    base_model_gb       = start_mem / (1024**3)
     inference_overhead_gb = (peak_mem - start_mem) / (1024**3)
-    total_peak_gb = peak_mem / (1024**3)
-    
+    total_peak_gb       = peak_mem / (1024**3)
+
     total_time = end_time - start_time
-    
-    input_len = inputs['input_ids'].shape[1]
-    generated_tokens_per_seq = outputs.shape[1] - input_len
     batch_size = outputs.shape[0]
-    total_generated_tokens = generated_tokens_per_seq * batch_size
-    
+
+    # Per-sequence actual input lengths (accounts for left-padding correctly)
+    actual_input_lens = inputs['attention_mask'].sum(dim=1)          # shape: [batch]
+    actual_generated  = outputs.shape[1] - actual_input_lens         # shape: [batch]
+    total_generated_tokens = actual_generated.sum().item()
+
     tps = total_generated_tokens / total_time
-    
+
     print(f"Total Time:         {total_time:.2f} seconds")
-    print(f"Tokens Gen:         {total_generated_tokens} tokens (Batch Size: {batch_size})")
+    print(f"Tokens Gen:         {int(total_generated_tokens)} tokens (Batch Size: {batch_size})")
     print(f"Speed:              {tps:.2f} tokens/second")
     print(f"Base Model VRAM:    {base_model_gb:.2f} GB (The static weights in 16-bit)")
     print(f"Inference Overhead: {inference_overhead_gb:.2f} GB (The dynamic 'Spike' for KV Cache)")
     print(f"Total Peak VRAM:    {total_peak_gb:.2f} GB (What you see in rocm-smi)\n")
-    
-    # Decode and print snippets from the native library conversions
-    print("--- Snippet: cuBLAS Native Compatibility Test ---")
-    print(tokenizer.decode(outputs[2][input_len:], skip_special_tokens=True)[:250].strip() + "...\n")
-    print("--- Snippet: cuFFT Native Compatibility Test ---")
-    print(tokenizer.decode(outputs[3][input_len:], skip_special_tokens=True)[:250].strip() + "...\n")
+
+    # Decode full outputs for all prompts using per-sequence actual input length
+    task_labels = [
+        "Warp Shuffle + CDNA Bug Fix",
+        "NVIDIA Reduction Template",
+        "cuBLAS Native Compatibility",
+        "cuFFT Native Compatibility",
+        "cuRAND Native Compatibility",
+    ]
+    for idx, label in enumerate(task_labels):
+        seq_input_len = actual_input_lens[idx].item()
+        print(f"--- Full Output [{idx+1}/{batch_size}]: {label} ---")
+        print(tokenizer.decode(outputs[idx][seq_input_len:], skip_special_tokens=True).strip())
+        print()
 
 # --- 4. EXECUTION FLOW ---
 
-print("Preparing Batch Tensors (Batch Size = 5)...")
-inputs_no_think = prepare_batch(thinking_enabled=False)
-inputs_think = prepare_batch(thinking_enabled=True)
+if __name__ == "__main__":
+    batch_size = len(prompt_entries)
+    print(f"Preparing Batch Tensors for BASE MODEL runs (Batch Size = {batch_size})...")
+    inputs_no_think = prepare_batch(thinking_enabled=False)
+    inputs_think    = prepare_batch(thinking_enabled=True)
 
-# 1. Base Model Benchmarks
-with model.disable_adapter():
-    run_benchmark("BASE MODEL", inputs_no_think, "Mode: Thinking DISABLED (Batch=5)")
-    run_benchmark("BASE MODEL", inputs_think, "Mode: Thinking ENABLED  (Batch=5)")
+    # 1. Base Model Benchmarks
+    with model.disable_adapter():
+        run_benchmark("BASE MODEL", inputs_no_think, f"Mode: Thinking DISABLED (Batch={batch_size})")
+        run_benchmark("BASE MODEL", inputs_think,    f"Mode: Thinking ENABLED  (Batch={batch_size})")
 
-# 2. LoRA Model Benchmarks
-run_benchmark("LORA MODEL", inputs_no_think, "Mode: Thinking DISABLED (Batch=5)")
-run_benchmark("LORA MODEL", inputs_think, "Mode: Thinking ENABLED  (Batch=5)")
+    # Free base-model batch tensors before LoRA runs to avoid holding both on GPU
+    del inputs_no_think, inputs_think
+    torch.cuda.empty_cache()
 
-print("\n" + "="*80)
-print(" BENCHMARK COMPLETE.")
-print("="*80)
+    # 2. LoRA Model Benchmarks
+    print(f"Preparing Batch Tensors for LORA MODEL runs (Batch Size = {batch_size})...")
+    inputs_no_think = prepare_batch(thinking_enabled=False)
+    inputs_think    = prepare_batch(thinking_enabled=True)
+
+    run_benchmark("LORA MODEL", inputs_no_think, f"Mode: Thinking DISABLED (Batch={batch_size})")
+    run_benchmark("LORA MODEL", inputs_think,    f"Mode: Thinking ENABLED  (Batch={batch_size})")
+
+    del inputs_no_think, inputs_think
+    torch.cuda.empty_cache()
+
+    print("\n" + "="*80)
+    print(" BENCHMARK COMPLETE.")
+    print("="*80)
