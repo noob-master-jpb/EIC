@@ -25,9 +25,10 @@ KEEP_RATIO = {
 EPSILON                    = 1e-8
 SEQ_LEN                    = 512
 N_CALIBRATION_SAMPLES      = 128
-CALIBRATION_BATCH_SIZE     = 1
-MODEL_NAME                 = "Qwen/Qwen3.5-0.8B"
-OUTPUT_DIR                 = "qwen3.5-0.8B-billm"
+CALIBRATION_BATCH_SIZE     = 6   # MI300X: larger batches fill HBM bandwidth
+QUANTIZE_BLOCK_SIZE        = 128 # Must be 128 because intra-block error is not compensated
+MODEL_NAME                 = "google/gemma-4-31B-it"
+OUTPUT_DIR                 = "gemma-4-E4B-billm"
 
 # VRAM safety: reserve this many GB as overhead buffer before moving to GPU
 VRAM_OVERHEAD_RESERVE_GB   = 0.5
@@ -161,42 +162,44 @@ def billm_quantize_block(Wb, C_diag_b, keep_ratio):
         
         Qb[:, salient_cols] = alpha_o * B_o + alpha_r * B_r
         
-    # 2. Non-Salient Weights: Bell-shaped Splitting Search
+    # 2. Non-Salient Weights: Bell-shaped Splitting Search (fully vectorized)
     if len(non_salient_cols) > 0:
-        W_uns = Wb[:, non_salient_cols]
+        W_uns = Wb[:, non_salient_cols]          # [R, C_uns]
         W_uns_abs = W_uns.abs()
-        
-        best_p = 0
-        best_err = float('inf')
-        best_Qb_uns = torch.zeros_like(W_uns)
-        
-        percentiles = torch.linspace(0.1, 0.9, 9).to(Wb.device)
-        p_cands = torch.quantile(W_uns_abs, percentiles)
-        
-        for p in p_cands:
-            mask_c = W_uns_abs <= p
-            mask_s = ~mask_c
-            
-            sum_c = (W_uns_abs * mask_c).sum(dim=1, keepdim=True)
-            count_c = mask_c.sum(dim=1, keepdim=True).clamp(min=1)
-            alpha_c = sum_c / count_c
-            
-            sum_s = (W_uns_abs * mask_s).sum(dim=1, keepdim=True)
-            count_s = mask_s.sum(dim=1, keepdim=True).clamp(min=1)
-            alpha_s = sum_s / count_s
-            
-            B_c = torch.sign(W_uns) * mask_c
-            B_s = torch.sign(W_uns) * mask_s
-            
-            Q_uns = alpha_c * B_c + alpha_s * B_s
-            err = torch.norm(W_uns - Q_uns)**2
-            
-            if err < best_err:
-                best_err = err
-                best_Qb_uns = Q_uns
-                
-        Qb[:, non_salient_cols] = best_Qb_uns
-        
+        W_uns_sign = torch.sign(W_uns)
+
+        percentiles = torch.linspace(0.1, 0.9, 9, device=Wb.device)
+        if W_uns_abs.numel() > 16777216:
+            sample_size = min(1_000_000, W_uns_abs.numel())
+            idx = torch.randint(0, W_uns_abs.numel(), (sample_size,), device=Wb.device)
+            p_cands = torch.quantile(
+                W_uns_abs.flatten()[idx].float(), percentiles.float()
+            ).to(W_uns_abs.dtype)               # [9]
+        else:
+            p_cands = torch.quantile(
+                W_uns_abs.float(), percentiles.float()
+            ).to(W_uns_abs.dtype)               # [9]
+
+        # Vectorize over all 9 thresholds simultaneously
+        # W_uns_abs: [R, C]  p_cands: [9]  -> broadcast to [9, R, C]
+        p = p_cands[:, None, None]              # [9, 1, 1]
+        a = W_uns_abs.unsqueeze(0)              # [1, R, C]
+        sg = W_uns_sign.unsqueeze(0)            # [1, R, C]
+
+        mask_c = a <= p                         # [9, R, C]  ("center" region)
+        mask_s = ~mask_c                        # [9, R, C]  ("spike" region)
+
+        # Per-row, per-candidate alpha values
+        alpha_c = (a * mask_c).sum(-1, keepdim=True) / mask_c.sum(-1, keepdim=True).clamp(min=1)  # [9, R, 1]
+        alpha_s = (a * mask_s).sum(-1, keepdim=True) / mask_s.sum(-1, keepdim=True).clamp(min=1)  # [9, R, 1]
+
+        Q_all = alpha_c * sg * mask_c + alpha_s * sg * mask_s  # [9, R, C]
+
+        # Squared Frobenius error per candidate
+        errs = ((a - Q_all.abs()) ** 2).sum(dim=(-2, -1))      # [9]
+        best_idx = errs.argmin()
+        Qb[:, non_salient_cols] = Q_all[best_idx]
+
     return Qb
 
 
@@ -233,6 +236,7 @@ def _run_calibration_on_device(model, samples, device):
             if x.dim() == 3:
                 x = x.reshape(-1, x.shape[-1])
             # BiLLM / GPTQ uses full Hessian: H = X^T X / N
+            # Must move to CPU: for 31B models, keeping all Hessians in VRAM causes OOM!
             h = (torch.matmul(x.float().t(), x.float()) / x.shape[0]).cpu()
             del x
             if name not in hess:
@@ -245,18 +249,17 @@ def _run_calibration_on_device(model, samples, device):
         if isinstance(m, nn.Linear):
             hooks.append(m.register_forward_hook(hook(name)))
 
+    # Batch samples to improve GPU utilization
+    batch_size = CALIBRATION_BATCH_SIZE if device.type == "cuda" else 1
     try:
-        for i, sample in enumerate(tqdm(samples, desc=f"Calibrating [{device.type.upper()}]")):
-            inp = sample.to(device)
+        for i in tqdm(range(0, len(samples), batch_size), desc=f"Calibrating [{device.type.upper()}]"):
+            batch = torch.cat(samples[i:i+batch_size], dim=0).to(device)
             with torch.inference_mode():
-                model(inp, use_cache=False)
-            del inp
+                model(batch, use_cache=False)
+            del batch
 
             if device.type == "cuda":
                 torch.cuda.synchronize()
-                torch.cuda.empty_cache()
-            if i % 16 == 0:
-                gc.collect()
     finally:
         # Always remove hooks — prevents double-counting on OOM retry
         for h in hooks:
@@ -321,33 +324,40 @@ def quantize(model, hessians):
     modules = dict(model.named_modules())
     layer_order = [n for n, m in modules.items() if isinstance(m, nn.Linear)]
 
+    # Determine compute device — with 200 GB VRAM everything stays on GPU
+    dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     for name in tqdm(layer_order, desc="Quantizing layers"):
         if name not in hessians:
             continue
 
         m = modules[name]
-        W = m.weight.data.clone().float()
-        H = hessians[name].to(W.device).float()
+        # Move to fast compute device
+        W = m.weight.data.clone().float().to(dev)
+        H = hessians[name].to(dev).float()
         
         # GPTQ-style damping
         damp = 0.01
         diag = torch.diag(H)
         H[torch.arange(H.shape[0]), torch.arange(H.shape[0])] += damp * diag.mean()
         
-        try:
-            H_inv = torch.linalg.inv(H)
-            U = torch.linalg.cholesky(H_inv, upper=True)
-        except RuntimeError:
-            print(f"[{name}] Cholesky failed, adding extra damping...")
-            H[torch.arange(H.shape[0]), torch.arange(H.shape[0])] += 0.05 * diag.mean()
-            H_inv = torch.linalg.inv(H)
-            U = torch.linalg.cholesky(H_inv, upper=True)
+        for attempt in range(100):
+            try:
+                H_inv = torch.linalg.inv(H)
+                U = torch.linalg.cholesky(H_inv, upper=True)
+                break
+            except Exception:
+                if attempt == 0:
+                    print(f"[{name}] Cholesky failed, adding extra damping...")
+                H[torch.arange(H.shape[0]), torch.arange(H.shape[0])] += 0.05 * diag.mean()
+        else:
+            raise RuntimeError(f"[{name}] Cholesky failed even after maximum damping attempts.")
             
         C_diag = torch.diag(H_inv)
         U_diag = torch.diag(U)
         
         keep_ratio = get_keep_ratio(name)
-        block_size = 128
+        block_size = QUANTIZE_BLOCK_SIZE
         in_features = W.shape[1]
         
         for i1 in range(0, in_features, block_size):
@@ -358,15 +368,20 @@ def quantize(model, hessians):
             
             Qb = billm_quantize_block(Wb, C_diag_b, keep_ratio)
             
-            # Update quantized weights
-            m.weight.data[:, i1:i2] = Qb.to(m.weight.data.dtype)
-            
-            # Block-wise OBC error update
-            Err = (Wb - Qb) / U_diag[i1:i2].unsqueeze(0)
+            # Exact Block-wise OBC error update without approximation
+            Err = (Wb - Qb) @ torch.linalg.inv(U[i1:i2, i1:i2])
             if i2 < in_features:
                 W[:, i2:] -= Err.matmul(U[i1:i2, i2:])
                 
+            # Update quantized weights
+            W[:, i1:i2] = Qb
+            
+        # Copy back to the original parameter
+        m.weight.data.copy_(W.to(dtype=m.weight.data.dtype, device=m.weight.data.device))
+        
         del H, H_inv, U, W
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         print(f"{name} | keep={keep_ratio:.4f}")
 
 
@@ -379,7 +394,7 @@ def _eval_nll(model, enc, device):
     """Inner NLL loop — caller handles device placement."""
     stride = SEQ_LEN
     # Cap window to 2048 to prevent OOM on long-context models during eval
-    max_len = min(model.config.max_position_embeddings, 2048)
+    max_len = min(getattr(model.config, "max_position_embeddings", 8192), 2048)
     nlls = []
 
     for i in range(0, enc.size(1), stride):
@@ -630,10 +645,10 @@ def main():
     samples = get_data(tokenizer)
     hess = collect_hessian(model, samples, device)
 
-    print("Quantizing on CPU (weight-only, no activations needed)...")
-    gc.collect()
-
+    # quantize() moves each layer's W/H to GPU and writes back — model weights on CPU
+    print("Quantizing (GPU-accelerated)...")
     quantize(model, hess)
+    del hess  # free GPU Hessian memory before eval
 
     ppl = perplexity(model, tokenizer, device)
     print("Perplexity:", ppl)
