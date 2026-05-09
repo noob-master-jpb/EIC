@@ -407,4 +407,29 @@ The model ran successfully on my local GPU, but some changes may be needed in th
    - Total estimated runtime for the full 4-run matrix (Base vs LoRA) is approximately **90 minutes**, producing a high-fidelity audit trail in `benchmark_output.txt`.
 
 ---
+
+## 9 May 2026, 11:30 PM · @Ayush
+
+### Unified Benchmark Suite & Quality Assurance (The "Absolute Stress Test")
+1. **Infrastructure Consolidation (Stress + Unit)**:
+   - **Unified Runner**: Refactored `benchmark.py` into a single, high-fidelity engine that executes both the 16 "Absolute Stress" kernels and a new 50-snippet "Unit Test" suite in one pass.
+   - **JSON Manifest**: Merged `unit_prompts.json` into the main `prompts.json` manifest (66 total entries), using `type` tags (`stress` vs `unit`) to trigger specific generation logic.
+2. **Production-Grade Unit Testing (50 Snippets)**:
+   - **Granular Validation**: Added 50 CUDA snippets across 5 critical categories: **Memory** (malloc/memcpy), **Math** (intrinsics), **Atomics**, **Warp Primitives**, and **Sync/Streams**.
+   - **PASS/FAIL Scorer**: Implemented an automated scoring system that detects successful HIP symbol mapping (e.g., `cudaMalloc` → `hipMalloc`) and flags "CUDA Leaks" (untranslated NVIDIA-specific code).
+   - **Reporting**: Added a category-level breakdown and final score-out-of-100 to the terminal and log.
+3. **Telemetry & Accuracy Fixes**:
+   - **Real-Time Progress**: Migrated from polling threads to a `LogitsProcessor`-based `LiveProgressBar`. This provides true, synchronous token-level tracking and precise ETAs without UI "jumping."
+   - **Flash Attention Fix**: Identified and resolved the mid-code truncation in the 4-file Flash Attention project by increasing its specific token budget to **4096 tokens**.
+4. **Failure Analysis & Root-Cause Audit**:
+   - **Hallucination Deep Dive**: Conducted a full audit of the BASE model's output, identifying critical hallucination bugs:
+     - `__nanosleep()` was falsely claimed as ROCm-compatible.
+     - `cuSPARSELt` API was entirely fabricated (fictional headers/types).
+     - CUTLASS fragment operations were silently downgraded to slow scalar loops.
+   - **Issue Report**: Generated a formal `issue_report.md` tying every failure back to specific lines in the output and their origin in `prompts.json`.
+
+### ➡️ Next Steps (Planned for Tomorrow)
+- **Full 66-Prompt Execution**: Run the final consolidated benchmark suite on a fresh MI300X droplet.
+- **LoRA vs Base Audit**: Perform the final head-to-head comparison to prove the LoRA's superiority in handling the 50 unit cases where the Base model typically hallucinates.
+- **Final Validation**: Ensure the 4096-token Flash Attention output is fully compilable.
 
