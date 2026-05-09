@@ -433,6 +433,8 @@ The model ran successfully on my local GPU, but some changes may be needed in th
 - **LoRA vs Base Audit**: Perform the final head-to-head comparison to prove the LoRA's superiority in handling the 50 unit cases where the Base model typically hallucinates.
 - **Final Validation**: Ensure the 4096-token Flash Attention output is fully compilable.
 
+---
+
 ## 10 May 2026, 12:30 AM · @Arya
 
 ### Web Search Service. `[Status: Done]`
