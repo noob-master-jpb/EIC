@@ -432,4 +432,9 @@ The model ran successfully on my local GPU, but some changes may be needed in th
 - **Full 66-Prompt Execution**: Run the final consolidated benchmark suite on a fresh MI300X droplet.
 - **LoRA vs Base Audit**: Perform the final head-to-head comparison to prove the LoRA's superiority in handling the 50 unit cases where the Base model typically hallucinates.
 - **Final Validation**: Ensure the 4096-token Flash Attention output is fully compilable.
-
+
+## 10 May 2026, 12:30 AM · @Arya
+
+### Web Search Service. `[Status: Done]`
+ * Web search services are used by LLMs to gather information and keep themselves up to date.
+ * Folder Name: `WebConn`
