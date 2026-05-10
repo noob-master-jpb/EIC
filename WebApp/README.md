@@ -1,9 +1,9 @@
 # CUDA → ROCm Transpiler Frontend
 
-This is a Streamlit-based frontend for transpiling CUDA code to HIP using a Gemma 4-based model.
+This is a Streamlit-based frontend for transpiling CUDA code to ROCm using a Gemma 4-based model.
 
 ## Features
-- **CUDA to HIP Translation**: Specialized mode for GPU kernel conversion.
+- **CUDA to ROCm Translation**: Specialized mode for GPU kernel conversion.
 - **General Chat**: Interact with the model for general queries.
 - **Reasoning Display**: Automatically parses and displays the model's "thinking" process.
 
