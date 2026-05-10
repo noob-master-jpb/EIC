@@ -1,4 +1,4 @@
-# CUDA → HIP Transpiler Frontend
+# CUDA → ROCm Transpiler Frontend
 
 This is a Streamlit-based frontend for transpiling CUDA code to HIP using a Gemma 4-based model.
 
