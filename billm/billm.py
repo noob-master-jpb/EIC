@@ -2,6 +2,7 @@ import os
 import gc
 import sys
 import math
+import re
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -32,36 +33,35 @@ os.environ.setdefault(
 KEEP_RATIO = {
     # Attention projections are extremely sensitive
     # These are now PRESERVED for salient columns.
-    "q_proj": 0.90,
-    "k_proj": 0.90,
+    "q_proj": 0.99,
+    "k_proj": 0.99,
 
     # Moderate protection
-    "v_proj": 0.90,
-    "o_proj": 0.90,
+    "v_proj": 0.99,
+    "o_proj": 0.99,
 
     # MLP can tolerate more ternary
-    "up_proj": 0.30,
-    "down_proj": 0.30,
-    "gate_proj": 0.30,
+    "up_proj": 0.4,
+    "down_proj": 0.4,
+    "gate_proj": 0.4,
 
-    "default": 0.30
+    "default": 0.5
 }
 
 EPSILON = 1e-8
 
-SEQ_LEN = 128*2 
-
+SEQ_LEN = 256
 # Better Hessian estimation
 N_CALIBRATION_SAMPLES = 512*75
 
 # Keep your GPU behavior unchanged
-CALIBRATION_BATCH_SIZE = 256
+CALIBRATION_BATCH_SIZE = 135
 
 # Stable local quantization
 QUANTIZE_BLOCK_SIZE = 64
 
-MODEL_NAME = "google/gemma-4-31B-it"
-OUTPUT_DIR = "gemma-4-31B-billm"
+MODEL_NAME = "/root/EIC/gemma-4-31B-it-merged"
+OUTPUT_DIR = "/root/EIC/gemma-4-31B-it-merged-billm"
 
 # MODEL_NAME = "google/gemma-4-E4B-it"
 # OUTPUT_DIR = "gemma-4-E4B-billm"
@@ -98,7 +98,7 @@ COLUMN_MAPPING = {
 
 VRAM_OVERHEAD_RESERVE_GB = 0.5
 
-MAX_EVAL_TOKENS = 4096
+MAX_EVAL_TOKENS = 4096//4
 
 FORCE_CPU = (
     os.environ.get("FORCE_CPU", "False")
@@ -568,16 +568,48 @@ def get_data(tokenizer):
             subset = ds.select(range(min(5000, len(ds))))
             
             if cols_to_extract:
-                # Concatenate the specified columns row by row
+                # Gemma-4 thinking format (verified from chat_template.jinja):
+                #
+                # INPUT trigger:  <|think|>  — injected at top of system turn
+                #                             via enable_thinking=True in apply_chat_template
+                #
+                # OUTPUT format:  <|channel>thought\n{reasoning}\n<channel|>{answer}<turn|>
+                #
+                # apply_chat_template with enable_thinking=True handles the input side.
+                # For the assistant turn we build the wire format manually because
+                # strip_thinking() in the template would erase the channel blocks
+                # if passed inside 'content'.
+                prompt_col, response_col = cols_to_extract[0], cols_to_extract[1]
                 for row in subset:
-                    row_parts = []
-                    for col in cols_to_extract:
-                        if col in row:
-                            val = row[col]
-                            if val:
-                                row_parts.append(str(val))
-                    if row_parts:
-                        ds_text.append("\n\n".join(row_parts))
+                    user_text = str(row.get(prompt_col, "") or "").strip()
+                    assistant_text = str(row.get(response_col, "") or "").strip()
+                    if not user_text or not assistant_text:
+                        continue
+                    try:
+                        # User turn: enable_thinking=True injects <|think|> into the
+                        # system block and adds <|turn>model\n (no suppressor channel)
+                        user_turn = tokenizer.apply_chat_template(
+                            [{"role": "user", "content": user_text}],
+                            tokenize=False,
+                            add_generation_prompt=True,
+                            enable_thinking=True,
+                        )
+                        # Strip <think>...</think> wrapper that some datasets include
+                        # (e.g. open_thoughts) — we provide the channel wrapper ourselves.
+                        thinking_text = ""
+                        answer_text = assistant_text
+                        think_match = re.match(r"<think>(.*?)</think>\s*(.*)", assistant_text, re.DOTALL)
+                        if think_match:
+                            thinking_text = think_match.group(1).strip()
+                            answer_text   = think_match.group(2).strip()
+
+                        model_turn = f"<|channel>thought\n{thinking_text}\n<channel|>{answer_text}<turn|>\n"
+                        ds_text.append(user_turn + model_turn)
+                    except Exception:
+                        # Fallback: raw concat if template fails
+                        ds_text.append(f"{user_text}\n\n{assistant_text}")
+
+
             else:
                 # Auto-detect a text column
                 possible_fields = ["text", "content", "instruction", "output", "code"]
@@ -1226,39 +1258,47 @@ def download_and_load_model(
     model_name,
     local_dir="models"
 ):
-
-    model_path = os.path.join(
-        local_dir,
-        model_name.split("/")[-1]
-    )
-
-    if (
-        not os.path.exists(model_path)
-        or not os.listdir(model_path)
-    ):
-
-        print(
-            f"Downloading model "
-            f"{model_name}..."
-        )
-
-        os.makedirs(
-            model_path,
-            exist_ok=True
-        )
-
-        snapshot_download(
-            repo_id=model_name,
-            local_dir=model_path,
-            local_dir_use_symlinks=False
-        )
-
-    else:
-
+    # --- Fallback: local path provided directly ---
+    if os.path.isabs(model_name) or os.path.exists(model_name):
+        model_path = model_name
         print(
             f"Loading local model from "
             f"{model_path}"
         )
+
+    else:
+        model_path = os.path.join(
+            local_dir,
+            model_name.split("/")[-1]
+        )
+
+        if (
+            not os.path.exists(model_path)
+            or not os.listdir(model_path)
+        ):
+
+            print(
+                f"Downloading model "
+                f"{model_name}..."
+            )
+
+            os.makedirs(
+                model_path,
+                exist_ok=True
+            )
+
+            snapshot_download(
+                repo_id=model_name,
+                local_dir=model_path,
+                local_dir_use_symlinks=False
+            )
+
+        else:
+
+            print(
+                f"Loading local model from "
+                f"{model_path}"
+            )
 
     tokenizer = AutoTokenizer.from_pretrained(
         model_path

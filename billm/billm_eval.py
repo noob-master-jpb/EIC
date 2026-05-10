@@ -186,7 +186,7 @@ def run_generation(model, tokenizer):
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    DEFAULT_MODEL_PATH = "./gemma-4-31B-billm"
+    DEFAULT_MODEL_PATH = "/root/EIC/gemma-4-31B-it-merged-billm"
     # DEFAULT_MODEL_PATH = "./gemma-4-E4B-billm"
     model_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_MODEL_PATH
 
